@@ -11,6 +11,7 @@
 #define PROBE_TIMEOUT_US (20 * G_USEC_PER_SEC)
 #define MAX_PROBE_THREADS 8
 #define MAX_ASYNC_THREADS 4
+#define MEDIA_CACHE_SCHEMA_VERSION 2
 
 typedef struct {
     int64_t mtime;
@@ -52,7 +53,7 @@ static void
 cache_load_from_db(void) {
     sqlite3_stmt *stmt = NULL;
     if (sqlite3_prepare_v2(cache_db,
-                           "SELECT path, mtime, size, duration_ms, width, height, bit_rate, video_codec FROM media",
+                           "SELECT path, mtime, size, duration_ms, width, height, bit_rate, video_codec, frame_rate FROM media",
                            -1,
                            &stmt,
                            NULL)
@@ -75,6 +76,7 @@ cache_load_from_db(void) {
         if (codec) {
             g_strlcpy(entry->info.video_codec, codec, sizeof(entry->info.video_codec));
         }
+        entry->info.frame_rate = sqlite3_column_double(stmt, 8);
         g_hash_table_replace(cache, g_strdup(path), entry);
     }
     sqlite3_finalize(stmt);
@@ -94,16 +96,30 @@ cache_init_locked(void) {
         if (sqlite3_open(db_path, &cache_db) == SQLITE_OK) {
             sqlite3_exec(cache_db, "PRAGMA synchronous=OFF", NULL, NULL, NULL);
             sqlite3_exec(cache_db, "PRAGMA journal_mode=MEMORY", NULL, NULL, NULL);
+            // The cache only holds data which can be read from the files again, so if the layout of the
+            // table changed it is simply thrown away and filled again on demand.
+            int schema_version = 0;
+            sqlite3_stmt *version_stmt = NULL;
+            if (sqlite3_prepare_v2(cache_db, "PRAGMA user_version", -1, &version_stmt, NULL) == SQLITE_OK) {
+                if (sqlite3_step(version_stmt) == SQLITE_ROW) {
+                    schema_version = sqlite3_column_int(version_stmt, 0);
+                }
+                sqlite3_finalize(version_stmt);
+            }
+            if (schema_version != MEDIA_CACHE_SCHEMA_VERSION) {
+                sqlite3_exec(cache_db, "DROP TABLE IF EXISTS media", NULL, NULL, NULL);
+                sqlite3_exec(cache_db, "PRAGMA user_version=" G_STRINGIFY(MEDIA_CACHE_SCHEMA_VERSION), NULL, NULL, NULL);
+            }
             if (sqlite3_exec(cache_db,
                              "CREATE TABLE IF NOT EXISTS media ("
                              "path TEXT PRIMARY KEY, mtime INTEGER, size INTEGER, duration_ms INTEGER,"
-                             "width INTEGER, height INTEGER, bit_rate INTEGER, video_codec TEXT)",
+                             "width INTEGER, height INTEGER, bit_rate INTEGER, video_codec TEXT, frame_rate REAL)",
                              NULL,
                              NULL,
                              NULL)
                 == SQLITE_OK) {
                 sqlite3_prepare_v2(cache_db,
-                                   "INSERT OR REPLACE INTO media VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                                   "INSERT OR REPLACE INTO media VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                                    -1,
                                    &insert_stmt,
                                    NULL);
@@ -157,6 +173,7 @@ cache_store(const char *path, int64_t mtime, int64_t size, const FsearchMediaInf
         sqlite3_bind_int(insert_stmt, 6, info->height);
         sqlite3_bind_int64(insert_stmt, 7, info->bit_rate);
         sqlite3_bind_text(insert_stmt, 8, info->video_codec, -1, SQLITE_STATIC);
+        sqlite3_bind_double(insert_stmt, 9, info->frame_rate);
         sqlite3_step(insert_stmt);
         sqlite3_reset(insert_stmt);
     }
@@ -194,7 +211,7 @@ find_video_stream(const AVFormatContext *fmt) {
 // Returns false only if the probe was cancelled. A file which can't be read is a valid result
 // (duration_ms == -1), so it's cached and not tried again until the file changes.
 static bool
-probe_file(const char *path, FsearchMediaInfo *info, GCancellable *cancellable) {
+probe_file(const char *path, int64_t file_size, FsearchMediaInfo *info, GCancellable *cancellable) {
     memset(info, 0, sizeof(*info));
     info->duration_ms = -1;
 
@@ -228,10 +245,22 @@ probe_file(const char *path, FsearchMediaInfo *info, GCancellable *cancellable) 
         info->duration_ms = fmt->duration / (AV_TIME_BASE / 1000);
     }
     info->bit_rate = fmt->bit_rate > 0 ? fmt->bit_rate : 0;
+    if (info->bit_rate == 0 && info->duration_ms > 0 && file_size > 0) {
+        // Some containers (e.g. Matroska) don't store the bit rate: use the average over the whole file
+        info->bit_rate = (int64_t)((double)file_size * 8.0 * 1000.0 / (double)info->duration_ms);
+    }
     if (video) {
         info->width = video->codecpar->width;
         info->height = video->codecpar->height;
         g_strlcpy(info->video_codec, avcodec_get_name(video->codecpar->codec_id), sizeof(info->video_codec));
+
+        AVRational rate = video->avg_frame_rate;
+        if (rate.num <= 0 || rate.den <= 0) {
+            rate = video->r_frame_rate;
+        }
+        if (rate.num > 0 && rate.den > 0) {
+            info->frame_rate = av_q2d(rate);
+        }
     }
 
     avformat_close_input(&fmt);
@@ -255,7 +284,7 @@ probe_batch_thread(gpointer data) {
         }
         const FsearchMediaJob *job = &batch->jobs[idx];
         FsearchMediaInfo info;
-        if (probe_file(job->path, &info, batch->cancellable)) {
+        if (probe_file(job->path, job->size, &info, batch->cancellable)) {
             cache_store(job->path, job->mtime, job->size, &info);
         }
     }
@@ -308,7 +337,7 @@ static void
 async_worker(gpointer data, gpointer user_data) {
     AsyncTask *task = data;
     FsearchMediaInfo info;
-    if (probe_file(task->path, &info, NULL)) {
+    if (probe_file(task->path, task->size, &info, NULL)) {
         cache_store(task->path, task->mtime, task->size, &info);
     }
 
@@ -362,4 +391,43 @@ fsearch_media_info_format_duration(int64_t duration_ms) {
         return g_strdup_printf("%" G_GINT64_FORMAT ":%02" G_GINT64_FORMAT ":%02" G_GINT64_FORMAT, hours, minutes, seconds);
     }
     return g_strdup_printf("%" G_GINT64_FORMAT ":%02" G_GINT64_FORMAT, minutes, seconds);
+}
+
+char *
+fsearch_media_info_format_resolution(int32_t width, int32_t height) {
+    if (width <= 0 || height <= 0) {
+        return g_strdup("");
+    }
+    return g_strdup_printf("%dx%d", width, height);
+}
+
+char *
+fsearch_media_info_format_bit_rate(int64_t bit_rate) {
+    if (bit_rate <= 0) {
+        return g_strdup("");
+    }
+    if (bit_rate >= 1000 * 1000) {
+        return g_strdup_printf("%.1f Mb/s", (double)bit_rate / (1000.0 * 1000.0));
+    }
+    return g_strdup_printf("%" G_GINT64_FORMAT " kb/s", (bit_rate + 500) / 1000);
+}
+
+char *
+fsearch_media_info_format_frame_rate(double frame_rate) {
+    if (frame_rate <= 0.0) {
+        return g_strdup("");
+    }
+    char buf[G_ASCII_DTOSTR_BUF_SIZE];
+    g_ascii_formatd(buf, sizeof(buf), "%.2f", frame_rate);
+    // 30.00 -> 30, 29.97 stays, 25.50 -> 25.5
+    if (strchr(buf, '.')) {
+        char *end = buf + strlen(buf) - 1;
+        while (*end == '0') {
+            *end-- = '\0';
+        }
+        if (*end == '.') {
+            *end = '\0';
+        }
+    }
+    return g_strdup(buf);
 }

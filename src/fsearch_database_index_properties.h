@@ -12,6 +12,10 @@
 #define DATABASE_INDEX_PROPERTY_EXTENSION_STRING "Extension"
 #define DATABASE_INDEX_PROPERTY_PATH_LENGTH_STRING "Path Length"
 #define DATABASE_INDEX_PROPERTY_DURATION_STRING "Duration"
+#define DATABASE_INDEX_PROPERTY_RESOLUTION_STRING "Resolution"
+#define DATABASE_INDEX_PROPERTY_VIDEO_CODEC_STRING "Video Codec"
+#define DATABASE_INDEX_PROPERTY_BITRATE_STRING "Bitrate"
+#define DATABASE_INDEX_PROPERTY_FPS_STRING "FPS"
 
 // WARNING: Do not change the order!
 // Changing the order will break the database file format
@@ -61,6 +65,10 @@ typedef enum {
     DATABASE_INDEX_PROPERTY_PATH_LENGTH,
     // Media property read from the video file itself (cached separately, see fsearch_media_info.h)
     DATABASE_INDEX_PROPERTY_DURATION,
+    DATABASE_INDEX_PROPERTY_RESOLUTION,
+    DATABASE_INDEX_PROPERTY_VIDEO_CODEC,
+    DATABASE_INDEX_PROPERTY_BITRATE,
+    DATABASE_INDEX_PROPERTY_FPS,
     NUM_DATABASE_INDEX_PROPERTIES,
 } FsearchDatabaseIndexProperty;
 
@@ -76,6 +84,21 @@ typedef struct FsearchDatabaseSortOrderChain {
 } FsearchDatabaseSortOrderChain;
 
 // not for display in the UI (not translated)
+// Properties which are read from inside the media files (and not from the file system index)
+static inline bool
+fsearch_database_index_property_is_media(FsearchDatabaseIndexProperty property) {
+    switch (property) {
+    case DATABASE_INDEX_PROPERTY_DURATION:
+    case DATABASE_INDEX_PROPERTY_RESOLUTION:
+    case DATABASE_INDEX_PROPERTY_VIDEO_CODEC:
+    case DATABASE_INDEX_PROPERTY_BITRATE:
+    case DATABASE_INDEX_PROPERTY_FPS:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static inline const char *
 fsearch_database_index_property_to_string(FsearchDatabaseIndexProperty property) {
     switch (property) {
@@ -109,6 +132,14 @@ fsearch_database_index_property_to_string(FsearchDatabaseIndexProperty property)
         return "path length";
     case DATABASE_INDEX_PROPERTY_DURATION:
         return "duration";
+    case DATABASE_INDEX_PROPERTY_RESOLUTION:
+        return "resolution";
+    case DATABASE_INDEX_PROPERTY_VIDEO_CODEC:
+        return "video codec";
+    case DATABASE_INDEX_PROPERTY_BITRATE:
+        return "bitrate";
+    case DATABASE_INDEX_PROPERTY_FPS:
+        return "fps";
     case NUM_DATABASE_INDEX_PROPERTIES:
         break;
     }

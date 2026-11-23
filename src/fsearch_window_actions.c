@@ -1053,6 +1053,70 @@ fsearch_window_action_show_duration_column(GSimpleAction *action, GVariant *vari
 }
 
 static void
+fsearch_window_action_show_resolution_column(GSimpleAction *action, GVariant *variant, gpointer user_data) {
+    FsearchApplicationWindow *self = user_data;
+    g_simple_action_set_state(action, variant);
+    gboolean value = g_variant_get_boolean(variant);
+    FsearchListView *list = FSEARCH_LIST_VIEW(fsearch_application_window_get_listview(self));
+    FsearchListViewColumn *col = fsearch_list_view_get_first_column_for_type(list, DATABASE_INDEX_PROPERTY_RESOLUTION);
+    if (!col) {
+        return;
+    }
+    fsearch_list_view_column_set_visible(list, col, value);
+    g_simple_action_set_state(action, variant);
+    FsearchConfig *config = fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT);
+    config->show_resolution_column = g_variant_get_boolean(variant);
+}
+
+static void
+fsearch_window_action_show_video_codec_column(GSimpleAction *action, GVariant *variant, gpointer user_data) {
+    FsearchApplicationWindow *self = user_data;
+    g_simple_action_set_state(action, variant);
+    gboolean value = g_variant_get_boolean(variant);
+    FsearchListView *list = FSEARCH_LIST_VIEW(fsearch_application_window_get_listview(self));
+    FsearchListViewColumn *col = fsearch_list_view_get_first_column_for_type(list, DATABASE_INDEX_PROPERTY_VIDEO_CODEC);
+    if (!col) {
+        return;
+    }
+    fsearch_list_view_column_set_visible(list, col, value);
+    g_simple_action_set_state(action, variant);
+    FsearchConfig *config = fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT);
+    config->show_video_codec_column = g_variant_get_boolean(variant);
+}
+
+static void
+fsearch_window_action_show_bitrate_column(GSimpleAction *action, GVariant *variant, gpointer user_data) {
+    FsearchApplicationWindow *self = user_data;
+    g_simple_action_set_state(action, variant);
+    gboolean value = g_variant_get_boolean(variant);
+    FsearchListView *list = FSEARCH_LIST_VIEW(fsearch_application_window_get_listview(self));
+    FsearchListViewColumn *col = fsearch_list_view_get_first_column_for_type(list, DATABASE_INDEX_PROPERTY_BITRATE);
+    if (!col) {
+        return;
+    }
+    fsearch_list_view_column_set_visible(list, col, value);
+    g_simple_action_set_state(action, variant);
+    FsearchConfig *config = fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT);
+    config->show_bitrate_column = g_variant_get_boolean(variant);
+}
+
+static void
+fsearch_window_action_show_fps_column(GSimpleAction *action, GVariant *variant, gpointer user_data) {
+    FsearchApplicationWindow *self = user_data;
+    g_simple_action_set_state(action, variant);
+    gboolean value = g_variant_get_boolean(variant);
+    FsearchListView *list = FSEARCH_LIST_VIEW(fsearch_application_window_get_listview(self));
+    FsearchListViewColumn *col = fsearch_list_view_get_first_column_for_type(list, DATABASE_INDEX_PROPERTY_FPS);
+    if (!col) {
+        return;
+    }
+    fsearch_list_view_column_set_visible(list, col, value);
+    g_simple_action_set_state(action, variant);
+    FsearchConfig *config = fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT);
+    config->show_fps_column = g_variant_get_boolean(variant);
+}
+
+static void
 fsearch_window_action_show_type_column(GSimpleAction *action, GVariant *variant, gpointer user_data) {
     FsearchApplicationWindow *self = user_data;
     g_simple_action_set_state(action, variant);
@@ -1137,6 +1201,10 @@ static GActionEntry FsearchWindowActions[] = {
     {"show_type_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_type_column},
     {"show_path_length_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_path_length_column},
     {"show_duration_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_duration_column},
+    {"show_resolution_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_resolution_column},
+    {"show_video_codec_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_video_codec_column},
+    {"show_bitrate_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_bitrate_column},
+    {"show_fps_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_fps_column},
     {"show_extension_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_extension_column},
     {"show_size_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_size_column},
     {"show_modified_column", action_toggle_state_cb, NULL, "true", fsearch_window_action_show_modified_column},
@@ -1191,6 +1259,10 @@ fsearch_window_actions_update(FsearchApplicationWindow *self) {
     action_set_enabled(group, "show_type_column", TRUE);
     action_set_enabled(group, "show_path_length_column", TRUE);
     action_set_enabled(group, "show_duration_column", TRUE);
+    action_set_enabled(group, "show_resolution_column", TRUE);
+    action_set_enabled(group, "show_video_codec_column", TRUE);
+    action_set_enabled(group, "show_bitrate_column", TRUE);
+    action_set_enabled(group, "show_fps_column", TRUE);
     action_set_enabled(group, "show_extension_column", TRUE);
     action_set_enabled(group, "show_size_column", TRUE);
     action_set_enabled(group, "show_modified_column", TRUE);
@@ -1207,6 +1279,10 @@ fsearch_window_actions_update(FsearchApplicationWindow *self) {
     action_set_active_bool(group, "show_type_column", config->show_type_column);
     action_set_active_bool(group, "show_path_length_column", config->show_path_length_column);
     action_set_active_bool(group, "show_duration_column", config->show_duration_column);
+    action_set_active_bool(group, "show_resolution_column", config->show_resolution_column);
+    action_set_active_bool(group, "show_video_codec_column", config->show_video_codec_column);
+    action_set_active_bool(group, "show_bitrate_column", config->show_bitrate_column);
+    action_set_active_bool(group, "show_fps_column", config->show_fps_column);
     action_set_active_bool(group, "show_extension_column", config->show_extension_column);
     action_set_active_bool(group, "show_size_column", config->show_size_column);
     action_set_active_bool(group, "show_modified_column", config->show_modified_column);

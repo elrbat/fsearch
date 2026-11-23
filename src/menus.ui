@@ -285,6 +285,22 @@
                 <attribute name="action">win.show_duration_column</attribute>
             </item>
             <item>
+                <attribute name="label" translatable="yes">Resolution</attribute>
+                <attribute name="action">win.show_resolution_column</attribute>
+            </item>
+            <item>
+                <attribute name="label" translatable="yes">Video Codec</attribute>
+                <attribute name="action">win.show_video_codec_column</attribute>
+            </item>
+            <item>
+                <attribute name="label" translatable="yes">Bitrate</attribute>
+                <attribute name="action">win.show_bitrate_column</attribute>
+            </item>
+            <item>
+                <attribute name="label" translatable="yes">FPS</attribute>
+                <attribute name="action">win.show_fps_column</attribute>
+            </item>
+            <item>
                 <attribute name="label" translatable="yes">Size</attribute>
                 <attribute name="action">win.show_size_column</attribute>
             </item>

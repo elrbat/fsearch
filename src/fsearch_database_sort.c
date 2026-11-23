@@ -73,7 +73,12 @@ fsearch_database_sort_order_chain_for_property(FsearchDatabaseIndexProperty prop
         chain.properties[chain.length++] = DATABASE_INDEX_PROPERTY_PATH_LENGTH;
         break;
     case DATABASE_INDEX_PROPERTY_DURATION:
-        chain.properties[chain.length++] = DATABASE_INDEX_PROPERTY_DURATION;
+    case DATABASE_INDEX_PROPERTY_RESOLUTION:
+    case DATABASE_INDEX_PROPERTY_VIDEO_CODEC:
+    case DATABASE_INDEX_PROPERTY_BITRATE:
+    case DATABASE_INDEX_PROPERTY_FPS:
+        // Same as FILETYPE: media properties have no fast index
+        chain.properties[chain.length++] = property;
         break;
     default:
         break;
@@ -266,8 +271,8 @@ fsearch_database_sort_results(FsearchDatabaseSortOrderChain old_chain,
         // The path length of each entry is cached lazily in a (not thread safe) hash table
         parallel_sort = false;
     }
-    else if (new_sort_order == DATABASE_INDEX_PROPERTY_DURATION) {
-        // Reads the duration of all videos which aren't cached yet, then sorts single threaded
+    else if (fsearch_database_index_property_is_media(new_sort_order)) {
+        // Reads the media info of all videos which aren't cached yet, then sorts single threaded
         // because the per-entry values are cached lazily in a (not thread safe) hash table
         parallel_sort = false;
         prepare_media_info(files_in, cancellable);

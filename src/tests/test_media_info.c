@@ -29,6 +29,32 @@ test_format_duration(void) {
 }
 
 static void
+test_format_other_properties(void) {
+    g_autofree char *r1 = fsearch_media_info_format_resolution(1920, 1080);
+    g_autofree char *r2 = fsearch_media_info_format_resolution(0, 0);
+    g_assert_cmpstr(r1, ==, "1920x1080");
+    g_assert_cmpstr(r2, ==, "");
+
+    g_autofree char *b1 = fsearch_media_info_format_bit_rate(0);
+    g_autofree char *b2 = fsearch_media_info_format_bit_rate(800000);
+    g_autofree char *b3 = fsearch_media_info_format_bit_rate(4500000);
+    g_assert_cmpstr(b1, ==, "");
+    g_assert_cmpstr(b2, ==, "800 kb/s");
+    g_assert_cmpstr(b3, ==, "4.5 Mb/s");
+
+    g_autofree char *f1 = fsearch_media_info_format_frame_rate(0.0);
+    g_autofree char *f2 = fsearch_media_info_format_frame_rate(30.0);
+    g_autofree char *f3 = fsearch_media_info_format_frame_rate(29.97003);
+    g_autofree char *f4 = fsearch_media_info_format_frame_rate(23.976024);
+    g_autofree char *f5 = fsearch_media_info_format_frame_rate(25.5);
+    g_assert_cmpstr(f1, ==, "");
+    g_assert_cmpstr(f2, ==, "30");
+    g_assert_cmpstr(f3, ==, "29.97");
+    g_assert_cmpstr(f4, ==, "23.98");
+    g_assert_cmpstr(f5, ==, "25.5");
+}
+
+static void
 test_is_video_extension(void) {
     g_assert_true(fsearch_media_info_is_video_extension("mp4"));
     g_assert_true(fsearch_media_info_is_video_extension("MKV"));
@@ -104,6 +130,8 @@ test_real_video_duration(void) {
     g_assert_cmpint(info.width, ==, 160);
     g_assert_cmpint(info.height, ==, 90);
     g_assert_cmpstr(info.video_codec, ==, "h264");
+    g_assert_cmpfloat_with_epsilon(info.frame_rate, 1.0, 0.001);
+    g_assert_cmpint(info.bit_rate, >, 0);
 }
 
 int
@@ -116,6 +144,7 @@ main(int argc, char **argv) {
     g_setenv("XDG_DATA_HOME", tmp_dir, TRUE);
 
     g_test_add_func("/FSearch/media_info/format_duration", test_format_duration);
+    g_test_add_func("/FSearch/media_info/format_other_properties", test_format_other_properties);
     g_test_add_func("/FSearch/media_info/is_video_extension", test_is_video_extension);
     g_test_add_func("/FSearch/media_info/unreadable_files_cached_as_unknown", test_unreadable_files_are_cached_as_unknown);
     g_test_add_func("/FSearch/media_info/cancelled_probe_caches_nothing", test_cancelled_probe_caches_nothing);

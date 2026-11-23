@@ -14,7 +14,8 @@ typedef struct {
     int64_t duration_ms; // -1 if unknown (not a media file, unreadable, ...)
     int32_t width;
     int32_t height;
-    int64_t bit_rate;
+    int64_t bit_rate; // bits per second, 0 if unknown
+    double frame_rate; // frames per second, 0 if unknown
     char video_codec[24];
 } FsearchMediaInfo;
 
@@ -53,5 +54,17 @@ fsearch_media_info_probe_async(const char *path,
 // "H:MM:SS" or "M:SS"; empty string if the duration is unknown. Free with g_free.
 char *
 fsearch_media_info_format_duration(int64_t duration_ms);
+
+// "1920x1080"; empty string if unknown. Free with g_free.
+char *
+fsearch_media_info_format_resolution(int32_t width, int32_t height);
+
+// "4.5 Mb/s" or "800 kb/s"; empty string if unknown. Free with g_free.
+char *
+fsearch_media_info_format_bit_rate(int64_t bit_rate);
+
+// "30", "29.97", "23.98"; empty string if unknown. Free with g_free.
+char *
+fsearch_media_info_format_frame_rate(double frame_rate);
 
 G_END_DECLS

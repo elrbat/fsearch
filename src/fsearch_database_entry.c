@@ -70,7 +70,7 @@ db_entry_compare_context_free(FsearchDatabaseEntryCompareContext *ctx) {
     g_clear_pointer(&ctx->file_type_table, g_hash_table_unref);
     g_clear_pointer(&ctx->entry_to_file_type_table, g_hash_table_unref);
     g_clear_pointer(&ctx->entry_to_path_length_table, g_hash_table_unref);
-    g_clear_pointer(&ctx->entry_to_duration_table, g_hash_table_unref);
+    g_clear_pointer(&ctx->entry_to_media_info_table, g_hash_table_unref);
     g_clear_pointer(&ctx, free);
 }
 
@@ -82,7 +82,7 @@ db_entry_compare_context_new(FsearchDatabaseSortOrderChain chain) {
     ctx->file_type_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     ctx->entry_to_file_type_table = g_hash_table_new(NULL, NULL);
     ctx->entry_to_path_length_table = g_hash_table_new(NULL, NULL);
-    ctx->entry_to_duration_table = g_hash_table_new(NULL, NULL);
+    ctx->entry_to_media_info_table = g_hash_table_new_full(NULL, NULL, NULL, g_free);
     ctx->chain = chain;
     return ctx;
 }
@@ -471,49 +471,76 @@ db_entry_compare_entries_by_path_length(FsearchDatabaseEntry **a, FsearchDatabas
     return 0;
 }
 
-int64_t
-db_entry_get_cached_duration_ms(FsearchDatabaseEntry *entry) {
-    g_return_val_if_fail(entry, -1);
+bool
+db_entry_get_cached_media_info(FsearchDatabaseEntry *entry, FsearchMediaInfo *info_out) {
+    g_return_val_if_fail(entry, false);
+    g_return_val_if_fail(info_out, false);
     if (db_entry_is_folder(entry)) {
-        return -1;
+        return false;
     }
     if (!fsearch_media_info_is_video_extension(db_entry_get_extension(entry))) {
-        return -1;
+        return false;
     }
     g_autoptr(GString) path = db_entry_get_path_full(entry);
+    return fsearch_media_info_lookup(path->str,
+                                     (int64_t)db_entry_get_mtime(entry),
+                                     (int64_t)db_entry_get_size(entry),
+                                     info_out);
+}
+
+int64_t
+db_entry_get_cached_duration_ms(FsearchDatabaseEntry *entry) {
     FsearchMediaInfo info;
-    if (!fsearch_media_info_lookup(path->str, (int64_t)db_entry_get_mtime(entry), (int64_t)db_entry_get_size(entry), &info)) {
-        return -1;
+    return db_entry_get_cached_media_info(entry, &info) ? info.duration_ms : -1;
+}
+
+// Returns the media info of the entry from the per-sort cache, or an "unknown" one (duration -1)
+static const FsearchMediaInfo *
+get_media_info_for_sort(FsearchDatabaseEntry *entry, GHashTable *cache) {
+    FsearchMediaInfo *cached = g_hash_table_lookup(cache, entry);
+    if (cached) {
+        return cached;
     }
-    return info.duration_ms;
+    cached = g_new0(FsearchMediaInfo, 1);
+    if (!db_entry_get_cached_media_info(entry, cached)) {
+        memset(cached, 0, sizeof(*cached));
+        cached->duration_ms = -1;
+    }
+    g_hash_table_insert(cache, entry, cached);
+    return cached;
+}
+
+static int
+compare_int64(int64_t a, int64_t b) {
+    return a > b ? 1 : (a < b ? -1 : 0);
 }
 
 int
-db_entry_compare_entries_by_duration(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data) {
+db_entry_compare_entries_by_media(FsearchDatabaseEntry **a,
+                                  FsearchDatabaseEntry **b,
+                                  FsearchDatabaseIndexProperty property,
+                                  gpointer data) {
     FsearchDatabaseEntryCompareContext *comp_ctx = data;
-    GHashTable *cache = comp_ctx->entry_to_duration_table;
+    const FsearchMediaInfo *info_a = get_media_info_for_sort(*a, comp_ctx->entry_to_media_info_table);
+    const FsearchMediaInfo *info_b = get_media_info_for_sort(*b, comp_ctx->entry_to_media_info_table);
 
-    // The cache stores duration + 2, so that a missing entry (NULL) can be told apart from "unknown" (-1)
-    int64_t durations[2];
-    FsearchDatabaseEntry *entries[2] = {*a, *b};
-    for (int i = 0; i < 2; ++i) {
-        gpointer cached = g_hash_table_lookup(cache, entries[i]);
-        if (cached) {
-            durations[i] = (int64_t)GPOINTER_TO_SIZE(cached) - 2;
-        }
-        else {
-            durations[i] = db_entry_get_cached_duration_ms(entries[i]);
-            g_hash_table_insert(cache, entries[i], GSIZE_TO_POINTER((gsize)(durations[i] + 2)));
-        }
+    switch (property) {
+    case DATABASE_INDEX_PROPERTY_DURATION:
+        return compare_int64(info_a->duration_ms, info_b->duration_ms);
+    case DATABASE_INDEX_PROPERTY_RESOLUTION: {
+        const int res = compare_int64((int64_t)info_a->width * info_a->height, (int64_t)info_b->width * info_b->height);
+        return res != 0 ? res : compare_int64(info_a->width, info_b->width);
     }
-
-    if (durations[0] > durations[1]) {
-        return 1;
+    case DATABASE_INDEX_PROPERTY_VIDEO_CODEC:
+        return strcmp(info_a->video_codec, info_b->video_codec);
+    case DATABASE_INDEX_PROPERTY_BITRATE:
+        return compare_int64(info_a->bit_rate, info_b->bit_rate);
+    case DATABASE_INDEX_PROPERTY_FPS:
+        // frame rates are compared with a resolution of 1/100 fps, so 29.97 and 29.970001 are equal
+        return compare_int64((int64_t)(info_a->frame_rate * 100.0 + 0.5), (int64_t)(info_b->frame_rate * 100.0 + 0.5));
+    default:
+        return 0;
     }
-    else if (durations[0] < durations[1]) {
-        return -1;
-    }
-    return 0;
 }
 
 static int
@@ -539,7 +566,11 @@ compare_entries_by_property(FsearchDatabaseEntry **a,
     case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
         return db_entry_compare_entries_by_path_length(a, b, ctx);
     case DATABASE_INDEX_PROPERTY_DURATION:
-        return db_entry_compare_entries_by_duration(a, b, ctx);
+    case DATABASE_INDEX_PROPERTY_RESOLUTION:
+    case DATABASE_INDEX_PROPERTY_VIDEO_CODEC:
+    case DATABASE_INDEX_PROPERTY_BITRATE:
+    case DATABASE_INDEX_PROPERTY_FPS:
+        return db_entry_compare_entries_by_media(a, b, property, ctx);
     default:
         return 0;
     }
@@ -1056,6 +1087,10 @@ entry_new_with_attributes_va(FsearchDatabaseIndexPropertyFlags attribute_flags,
         case DATABASE_INDEX_PROPERTY_EXTENSION:
         case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
         case DATABASE_INDEX_PROPERTY_DURATION:
+        case DATABASE_INDEX_PROPERTY_RESOLUTION:
+        case DATABASE_INDEX_PROPERTY_VIDEO_CODEC:
+        case DATABASE_INDEX_PROPERTY_BITRATE:
+        case DATABASE_INDEX_PROPERTY_FPS:
         case NUM_DATABASE_INDEX_PROPERTIES:
             g_assert_not_reached();
         }

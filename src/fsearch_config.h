@@ -94,6 +94,10 @@ struct _FsearchConfig {
     bool show_extension_column;
     bool show_path_length_column;
     bool show_duration_column;
+    bool show_resolution_column;
+    bool show_video_codec_column;
+    bool show_bitrate_column;
+    bool show_fps_column;
     bool show_size_column;
     bool show_modified_column;
 
@@ -106,6 +110,10 @@ struct _FsearchConfig {
     uint32_t extension_column_width;
     uint32_t path_length_column_width;
     uint32_t duration_column_width;
+    uint32_t resolution_column_width;
+    uint32_t video_codec_column_width;
+    uint32_t bitrate_column_width;
+    uint32_t fps_column_width;
     uint32_t size_column_width;
     uint32_t modified_column_width;
 

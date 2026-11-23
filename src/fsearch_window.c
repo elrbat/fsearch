@@ -793,6 +793,34 @@ add_columns(FsearchListView *view, FsearchConfig *config) {
                                                                        restore ? config->show_duration_column : FALSE,
                                                                        FALSE,
                                                                        restore ? config->duration_column_width : 100);
+    FsearchListViewColumn *resolution_col = fsearch_list_view_column_new(DATABASE_INDEX_PROPERTY_RESOLUTION,
+                                                                  _("Resolution"),
+                                                                  PANGO_ALIGN_LEFT,
+                                                                  PANGO_ELLIPSIZE_END,
+                                                                  restore ? config->show_resolution_column : FALSE,
+                                                                  FALSE,
+                                                                  restore ? config->resolution_column_width : 100);
+    FsearchListViewColumn *video_codec_col = fsearch_list_view_column_new(DATABASE_INDEX_PROPERTY_VIDEO_CODEC,
+                                                                  _("Video Codec"),
+                                                                  PANGO_ALIGN_LEFT,
+                                                                  PANGO_ELLIPSIZE_END,
+                                                                  restore ? config->show_video_codec_column : FALSE,
+                                                                  FALSE,
+                                                                  restore ? config->video_codec_column_width : 100);
+    FsearchListViewColumn *bitrate_col = fsearch_list_view_column_new(DATABASE_INDEX_PROPERTY_BITRATE,
+                                                                  _("Bitrate"),
+                                                                  PANGO_ALIGN_RIGHT,
+                                                                  PANGO_ELLIPSIZE_END,
+                                                                  restore ? config->show_bitrate_column : FALSE,
+                                                                  FALSE,
+                                                                  restore ? config->bitrate_column_width : 100);
+    FsearchListViewColumn *fps_col = fsearch_list_view_column_new(DATABASE_INDEX_PROPERTY_FPS,
+                                                                  _("FPS"),
+                                                                  PANGO_ALIGN_RIGHT,
+                                                                  PANGO_ELLIPSIZE_END,
+                                                                  restore ? config->show_fps_column : FALSE,
+                                                                  FALSE,
+                                                                  restore ? config->fps_column_width : 70);
     FsearchListViewColumn *changed_col = fsearch_list_view_column_new(DATABASE_INDEX_PROPERTY_MODIFICATION_TIME,
                                                                       _("Date Modified"),
                                                                       PANGO_ALIGN_RIGHT,
@@ -807,6 +835,10 @@ add_columns(FsearchListView *view, FsearchConfig *config) {
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), type_col);
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), path_length_col);
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), duration_col);
+    fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), resolution_col);
+    fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), video_codec_col);
+    fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), bitrate_col);
+    fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), fps_col);
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), size_col);
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), changed_col);
     fsearch_list_view_column_set_tooltip(type_col,
@@ -1189,6 +1221,18 @@ get_sort_order_for_name(const char *name) {
     else if (!strcmp(name, DATABASE_INDEX_PROPERTY_DURATION_STRING)) {
         return DATABASE_INDEX_PROPERTY_DURATION;
     }
+    else if (!strcmp(name, DATABASE_INDEX_PROPERTY_RESOLUTION_STRING)) {
+        return DATABASE_INDEX_PROPERTY_RESOLUTION;
+    }
+    else if (!strcmp(name, DATABASE_INDEX_PROPERTY_VIDEO_CODEC_STRING)) {
+        return DATABASE_INDEX_PROPERTY_VIDEO_CODEC;
+    }
+    else if (!strcmp(name, DATABASE_INDEX_PROPERTY_BITRATE_STRING)) {
+        return DATABASE_INDEX_PROPERTY_BITRATE;
+    }
+    else if (!strcmp(name, DATABASE_INDEX_PROPERTY_FPS_STRING)) {
+        return DATABASE_INDEX_PROPERTY_FPS;
+    }
     else {
         return DATABASE_INDEX_PROPERTY_NAME;
     }
@@ -1218,6 +1262,18 @@ get_sort_name_for_type(FsearchDatabaseIndexProperty type) {
         break;
     case DATABASE_INDEX_PROPERTY_DURATION:
         name = DATABASE_INDEX_PROPERTY_DURATION_STRING;
+        break;
+    case DATABASE_INDEX_PROPERTY_RESOLUTION:
+        name = DATABASE_INDEX_PROPERTY_RESOLUTION_STRING;
+        break;
+    case DATABASE_INDEX_PROPERTY_VIDEO_CODEC:
+        name = DATABASE_INDEX_PROPERTY_VIDEO_CODEC_STRING;
+        break;
+    case DATABASE_INDEX_PROPERTY_BITRATE:
+        name = DATABASE_INDEX_PROPERTY_BITRATE_STRING;
+        break;
+    case DATABASE_INDEX_PROPERTY_FPS:
+        name = DATABASE_INDEX_PROPERTY_FPS_STRING;
         break;
     case DATABASE_INDEX_PROPERTY_SIZE:
         name = DATABASE_INDEX_PROPERTY_SIZE_STRING;
@@ -1261,6 +1317,10 @@ fsearch_application_window_prepare_shutdown(gpointer self) {
             {DATABASE_INDEX_PROPERTY_EXTENSION, &config->extension_column_width},
             {DATABASE_INDEX_PROPERTY_PATH_LENGTH, &config->path_length_column_width},
             {DATABASE_INDEX_PROPERTY_DURATION, &config->duration_column_width},
+            {DATABASE_INDEX_PROPERTY_RESOLUTION, &config->resolution_column_width},
+            {DATABASE_INDEX_PROPERTY_VIDEO_CODEC, &config->video_codec_column_width},
+            {DATABASE_INDEX_PROPERTY_BITRATE, &config->bitrate_column_width},
+            {DATABASE_INDEX_PROPERTY_FPS, &config->fps_column_width},
             {DATABASE_INDEX_PROPERTY_SIZE, &config->size_column_width},
             {DATABASE_INDEX_PROPERTY_MODIFICATION_TIME, &config->modified_column_width},
         };
@@ -1290,7 +1350,7 @@ fsearch_application_window_added(FsearchApplicationWindow *win, FsearchApplicati
     FsearchDatabaseIndexProperty sort_order = config->restore_sort_order ? get_sort_order_for_name(config->sort_by)
                                                                          : DATABASE_INDEX_PROPERTY_NAME;
     if (sort_order == DATABASE_INDEX_PROPERTY_FILETYPE || sort_order == DATABASE_INDEX_PROPERTY_PATH_LENGTH
-        || sort_order == DATABASE_INDEX_PROPERTY_DURATION) {
+        || fsearch_database_index_property_is_media(sort_order)) {
         // file type and path length order are not indexed, so it would make startup really slow
         // -> fall back to sort by name instead
         sort_order = DATABASE_INDEX_PROPERTY_NAME;

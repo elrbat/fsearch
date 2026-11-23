@@ -7,6 +7,7 @@
 #include "fsearch_array.h"
 #include "fsearch_database_entry_flags.h"
 #include "fsearch_database_index_properties.h"
+#include "fsearch_media_info.h"
 
 typedef enum {
     DATABASE_ENTRY_TYPE_NONE,
@@ -21,7 +22,7 @@ typedef struct FsearchDatabaseEntryCompareContext {
     GHashTable *file_type_table;
     GHashTable *entry_to_file_type_table;
     GHashTable *entry_to_path_length_table;
-    GHashTable *entry_to_duration_table;
+    GHashTable *entry_to_media_info_table; // entry -> FsearchMediaInfo * (owned)
     FsearchDatabaseSortOrderChain chain;
 } FsearchDatabaseEntryCompareContext;
 
@@ -186,11 +187,19 @@ db_entry_compare_entries_by_chain(FsearchDatabaseEntry **a, FsearchDatabaseEntry
 int
 db_entry_compare_entries_by_path_length(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data);
 
-// Duration of the video, taken from the media info cache (entries without cached info sort first).
+// Compares by a media property (duration, resolution, codec, bit rate, fps) taken from the media info
+// cache. Entries without cached info sort first.
 int
-db_entry_compare_entries_by_duration(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data);
+db_entry_compare_entries_by_media(FsearchDatabaseEntry **a,
+                                  FsearchDatabaseEntry **b,
+                                  FsearchDatabaseIndexProperty property,
+                                  gpointer data);
 
-// Same lookup as used for sorting: duration in ms from the cache, -1 if not available
+// Same lookup as used for sorting: returns false if there's no cached media info for the entry
+bool
+db_entry_get_cached_media_info(FsearchDatabaseEntry *entry, FsearchMediaInfo *info_out);
+
+// Duration in ms from the cache, -1 if not available
 int64_t
 db_entry_get_cached_duration_ms(FsearchDatabaseEntry *entry);
 

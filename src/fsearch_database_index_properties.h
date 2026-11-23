@@ -10,6 +10,7 @@
 #define DATABASE_INDEX_PROPERTY_MODIFICATION_TIME_STRING "Date Modified"
 #define DATABASE_INDEX_PROPERTY_FILETYPE_STRING "Type"
 #define DATABASE_INDEX_PROPERTY_EXTENSION_STRING "Extension"
+#define DATABASE_INDEX_PROPERTY_PATH_LENGTH_STRING "Path Length"
 
 // WARNING: Do not change the order!
 // Changing the order will break the database file format
@@ -54,6 +55,9 @@ typedef enum {
     DATABASE_INDEX_PROPERTY_NUM_FOLDERS,
     DATABASE_INDEX_PROPERTY_FILETYPE,
     DATABASE_INDEX_PROPERTY_EXTENSION,
+    // Derived property (number of characters of the full path). Not stored in the database file,
+    // so it must stay after all persisted properties to keep the file format compatible.
+    DATABASE_INDEX_PROPERTY_PATH_LENGTH,
     NUM_DATABASE_INDEX_PROPERTIES,
 } FsearchDatabaseIndexProperty;
 
@@ -98,6 +102,8 @@ fsearch_database_index_property_to_string(FsearchDatabaseIndexProperty property)
         return "type";
     case DATABASE_INDEX_PROPERTY_EXTENSION:
         return "extension";
+    case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
+        return "path length";
     case NUM_DATABASE_INDEX_PROPERTIES:
         break;
     }

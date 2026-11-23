@@ -1466,6 +1466,64 @@ test_get_flags_reflects_type_and_mark(void) {
 }
 
 /* ------------------------------------------------------------------------ *
+ * Path length (derived property)
+ * ------------------------------------------------------------------------ */
+
+static void
+test_path_full_length_matches_path_string(void) {
+    FsearchDatabaseEntry *root = new_folder(DATABASE_INDEX_PROPERTY_FLAG_NONE, "/", NULL);
+    FsearchDatabaseEntry *dir = new_folder(DATABASE_INDEX_PROPERTY_FLAG_NONE, "dir", root);
+    FsearchDatabaseEntry *file = new_file(DATABASE_INDEX_PROPERTY_FLAG_NONE, "file.mp4", dir);
+    // Multi-byte names: the length is counted in characters, not bytes
+    FsearchDatabaseEntry *ar_dir = new_folder(DATABASE_INDEX_PROPERTY_FLAG_NONE, "مجلد", root);
+    FsearchDatabaseEntry *ar_file = new_file(DATABASE_INDEX_PROPERTY_FLAG_NONE, "فيديو.mp4", ar_dir);
+
+    FsearchDatabaseEntry *entries[] = {root, dir, file, ar_dir, ar_file};
+    for (guint i = 0; i < G_N_ELEMENTS(entries); ++i) {
+        g_autoptr(GString) full = db_entry_get_path_full(entries[i]);
+        g_assert_cmpuint(db_entry_get_path_full_length(entries[i]), ==, g_utf8_strlen(full->str, full->len));
+    }
+
+    g_assert_cmpuint(db_entry_get_path_full_length(root), ==, 1);
+    g_assert_cmpuint(db_entry_get_path_full_length(file), ==, strlen("/dir/file.mp4"));
+    g_assert_cmpuint(db_entry_get_path_full_length(ar_file), ==, 1 + 4 + 1 + 9);
+
+    db_entry_free(ar_file);
+    db_entry_free(ar_dir);
+    db_entry_free(file);
+    db_entry_free(dir);
+    db_entry_free(root);
+}
+
+static void
+test_compare_by_chain_path_length_then_name(void) {
+    FsearchDatabaseEntry *root = new_folder(DATABASE_INDEX_PROPERTY_FLAG_NONE, "/", NULL);
+    FsearchDatabaseEntry *deep = new_folder(DATABASE_INDEX_PROPERTY_FLAG_NONE, "a_long_folder_name", root);
+    FsearchDatabaseEntry *short_file = new_file(DATABASE_INDEX_PROPERTY_FLAG_NONE, "z.mp4", root);
+    FsearchDatabaseEntry *long_file = new_file(DATABASE_INDEX_PROPERTY_FLAG_NONE, "a.mp4", deep);
+    FsearchDatabaseEntry *same_len_a = new_file(DATABASE_INDEX_PROPERTY_FLAG_NONE, "b.mp4", root);
+
+    FsearchDatabaseSortOrderChain chain = {};
+    chain.properties[chain.length++] = DATABASE_INDEX_PROPERTY_PATH_LENGTH;
+    chain.properties[chain.length++] = DATABASE_INDEX_PROPERTY_NAME;
+    g_autoptr(FsearchDatabaseEntryCompareContext) ctx = db_entry_compare_context_new(chain);
+
+    // shorter path first
+    g_assert_cmpint(db_entry_compare_entries_by_chain(&short_file, &long_file, ctx), <, 0);
+    g_assert_cmpint(db_entry_compare_entries_by_chain(&long_file, &short_file, ctx), >, 0);
+    // same length: falls through to the name
+    g_assert_cmpint(db_entry_compare_entries_by_chain(&same_len_a, &short_file, ctx), <, 0);
+    // identical entry
+    g_assert_cmpint(db_entry_compare_entries_by_chain(&long_file, &long_file, ctx), ==, 0);
+
+    db_entry_free(same_len_a);
+    db_entry_free(long_file);
+    db_entry_free(short_file);
+    db_entry_free(deep);
+    db_entry_free(root);
+}
+
+/* ------------------------------------------------------------------------ *
  * Main
  * ------------------------------------------------------------------------ */
 
@@ -1626,6 +1684,12 @@ main(int argc, char **argv) {
 
     // Flags
     g_test_add_func("/FSearch/database/entry/get_flags_type_and_mark", test_get_flags_reflects_type_and_mark);
+
+    // Path length
+    g_test_add_func("/FSearch/database/entry/path_full_length_matches_path_string",
+                    test_path_full_length_matches_path_string);
+    g_test_add_func("/FSearch/database/entry/compare_by_chain_path_length_then_name",
+                    test_compare_by_chain_path_length_then_name);
 
     return g_test_run();
 }

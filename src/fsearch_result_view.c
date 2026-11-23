@@ -162,6 +162,11 @@ fsearch_result_view_query_tooltip(FsearchResultView *view,
         text = g_strdup(fsearch_database_entry_info_get_extension(info)->str);
         break;
     }
+    case DATABASE_INDEX_PROPERTY_PATH_LENGTH: {
+        GString *path_full = fsearch_database_entry_info_get_path_full(info);
+        text = g_strdup_printf("%ld", g_utf8_strlen(path_full->str, path_full->len));
+        break;
+    }
     case DATABASE_INDEX_PROPERTY_FILETYPE: {
         text = fsearch_file_utils_get_file_type(
             fsearch_database_entry_info_get_name(info)->str,
@@ -456,6 +461,12 @@ fsearch_result_view_draw_row(FsearchResultView *result_view,
                 break;
             case DATABASE_INDEX_PROPERTY_EXTENSION: {
                 text = fsearch_database_entry_info_get_extension(info)->str;
+                break;
+            }
+            case DATABASE_INDEX_PROPERTY_PATH_LENGTH: {
+                GString *path_full = fsearch_database_entry_info_get_path_full(info);
+                text_autofree = g_strdup_printf("%ld", g_utf8_strlen(path_full->str, path_full->len));
+                text = text_autofree;
                 break;
             }
             case DATABASE_INDEX_PROPERTY_FILETYPE:

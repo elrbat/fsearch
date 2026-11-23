@@ -779,6 +779,13 @@ add_columns(FsearchListView *view, FsearchConfig *config) {
                                                                   restore ? config->show_extension_column : TRUE,
                                                                   FALSE,
                                                                   restore ? config->extension_column_width : 100);
+    FsearchListViewColumn *path_length_col = fsearch_list_view_column_new(DATABASE_INDEX_PROPERTY_PATH_LENGTH,
+                                                                          _("Path Length"),
+                                                                          PANGO_ALIGN_RIGHT,
+                                                                          PANGO_ELLIPSIZE_END,
+                                                                          restore ? config->show_path_length_column : FALSE,
+                                                                          FALSE,
+                                                                          restore ? config->path_length_column_width : 100);
     FsearchListViewColumn *changed_col = fsearch_list_view_column_new(DATABASE_INDEX_PROPERTY_MODIFICATION_TIME,
                                                                       _("Date Modified"),
                                                                       PANGO_ALIGN_RIGHT,
@@ -791,6 +798,7 @@ add_columns(FsearchListView *view, FsearchConfig *config) {
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), path_col);
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), ext_col);
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), type_col);
+    fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), path_length_col);
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), size_col);
     fsearch_list_view_append_column(FSEARCH_LIST_VIEW(view), changed_col);
     fsearch_list_view_column_set_tooltip(type_col,
@@ -1167,6 +1175,9 @@ get_sort_order_for_name(const char *name) {
     else if (!strcmp(name, DATABASE_INDEX_PROPERTY_FILETYPE_STRING)) {
         return DATABASE_INDEX_PROPERTY_FILETYPE;
     }
+    else if (!strcmp(name, DATABASE_INDEX_PROPERTY_PATH_LENGTH_STRING)) {
+        return DATABASE_INDEX_PROPERTY_PATH_LENGTH;
+    }
     else {
         return DATABASE_INDEX_PROPERTY_NAME;
     }
@@ -1190,6 +1201,9 @@ get_sort_name_for_type(FsearchDatabaseIndexProperty type) {
         break;
     case DATABASE_INDEX_PROPERTY_FILETYPE:
         name = DATABASE_INDEX_PROPERTY_FILETYPE_STRING;
+        break;
+    case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
+        name = DATABASE_INDEX_PROPERTY_PATH_LENGTH_STRING;
         break;
     case DATABASE_INDEX_PROPERTY_SIZE:
         name = DATABASE_INDEX_PROPERTY_SIZE_STRING;
@@ -1231,6 +1245,7 @@ fsearch_application_window_prepare_shutdown(gpointer self) {
             {DATABASE_INDEX_PROPERTY_PATH, &config->path_column_width},
             {DATABASE_INDEX_PROPERTY_FILETYPE, &config->type_column_width},
             {DATABASE_INDEX_PROPERTY_EXTENSION, &config->extension_column_width},
+            {DATABASE_INDEX_PROPERTY_PATH_LENGTH, &config->path_length_column_width},
             {DATABASE_INDEX_PROPERTY_SIZE, &config->size_column_width},
             {DATABASE_INDEX_PROPERTY_MODIFICATION_TIME, &config->modified_column_width},
         };
@@ -1259,8 +1274,8 @@ fsearch_application_window_added(FsearchApplicationWindow *win, FsearchApplicati
 
     FsearchDatabaseIndexProperty sort_order = config->restore_sort_order ? get_sort_order_for_name(config->sort_by)
                                                                          : DATABASE_INDEX_PROPERTY_NAME;
-    if (sort_order == DATABASE_INDEX_PROPERTY_FILETYPE) {
-        // file type order is not indexed, so it would make startup really slow
+    if (sort_order == DATABASE_INDEX_PROPERTY_FILETYPE || sort_order == DATABASE_INDEX_PROPERTY_PATH_LENGTH) {
+        // file type and path length order are not indexed, so it would make startup really slow
         // -> fall back to sort by name instead
         sort_order = DATABASE_INDEX_PROPERTY_NAME;
     }

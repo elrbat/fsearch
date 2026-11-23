@@ -92,6 +92,7 @@ struct _FsearchConfig {
     bool show_path_column;
     bool show_type_column;
     bool show_extension_column;
+    bool show_path_length_column;
     bool show_size_column;
     bool show_modified_column;
 
@@ -102,6 +103,7 @@ struct _FsearchConfig {
     uint32_t path_column_width;
     uint32_t type_column_width;
     uint32_t extension_column_width;
+    uint32_t path_length_column_width;
     uint32_t size_column_width;
     uint32_t modified_column_width;
 

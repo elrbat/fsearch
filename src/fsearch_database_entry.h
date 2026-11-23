@@ -20,6 +20,7 @@ typedef struct FsearchDatabaseEntry FsearchDatabaseEntry;
 typedef struct FsearchDatabaseEntryCompareContext {
     GHashTable *file_type_table;
     GHashTable *entry_to_file_type_table;
+    GHashTable *entry_to_path_length_table;
     FsearchDatabaseSortOrderChain chain;
 } FsearchDatabaseEntryCompareContext;
 
@@ -103,6 +104,10 @@ db_entry_append_path(FsearchDatabaseEntry *entry, GString *str);
 void
 db_entry_append_full_path(FsearchDatabaseEntry *entry, GString *str);
 
+// Number of characters (not bytes) of the full path, computed without building the path string.
+uint32_t
+db_entry_get_path_full_length(FsearchDatabaseEntry *entry);
+
 time_t
 db_entry_get_mtime(FsearchDatabaseEntry *entry);
 
@@ -176,6 +181,9 @@ db_entry_compare_entries_by_name(FsearchDatabaseEntry **a, FsearchDatabaseEntry 
 // a non-zero result, giving the full, deterministic total order that chain represents.
 int
 db_entry_compare_entries_by_chain(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data);
+
+int
+db_entry_compare_entries_by_path_length(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data);
 
 FsearchDatabaseEntry *
 db_entry_new(FsearchDatabaseIndexPropertyFlags attribute_flags,

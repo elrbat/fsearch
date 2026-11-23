@@ -67,6 +67,10 @@ fsearch_database_sort_order_chain_for_property(FsearchDatabaseIndexProperty prop
         // fsearch_database_sort_order_chain_prepend().
         chain.properties[chain.length++] = DATABASE_INDEX_PROPERTY_FILETYPE;
         break;
+    case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
+        // Same as FILETYPE: no fast index exists, the manual sort extends this with the previous chain.
+        chain.properties[chain.length++] = DATABASE_INDEX_PROPERTY_PATH_LENGTH;
+        break;
     default:
         break;
     }
@@ -215,6 +219,10 @@ fsearch_database_sort_results(FsearchDatabaseSortOrderChain old_chain,
         // To avoid duplicating the filetype in memory for each file, we also store each filetype only once in
         // a separate hash table.
         // We also disable parallel sorting.
+        parallel_sort = false;
+    }
+    else if (new_sort_order == DATABASE_INDEX_PROPERTY_PATH_LENGTH) {
+        // The path length of each entry is cached lazily in a (not thread safe) hash table
         parallel_sort = false;
     }
 

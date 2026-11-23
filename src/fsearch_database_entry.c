@@ -68,6 +68,7 @@ db_entry_compare_context_free(FsearchDatabaseEntryCompareContext *ctx) {
 
     g_clear_pointer(&ctx->file_type_table, g_hash_table_unref);
     g_clear_pointer(&ctx->entry_to_file_type_table, g_hash_table_unref);
+    g_clear_pointer(&ctx->entry_to_path_length_table, g_hash_table_unref);
     g_clear_pointer(&ctx, free);
 }
 
@@ -78,6 +79,7 @@ db_entry_compare_context_new(FsearchDatabaseSortOrderChain chain) {
 
     ctx->file_type_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     ctx->entry_to_file_type_table = g_hash_table_new(NULL, NULL);
+    ctx->entry_to_path_length_table = g_hash_table_new(NULL, NULL);
     ctx->chain = chain;
     return ctx;
 }
@@ -181,6 +183,34 @@ db_entry_append_full_path(FsearchDatabaseEntry *entry, GString *str) {
     else {
         g_string_append_c(str, G_DIR_SEPARATOR);
     }
+}
+
+static uint32_t
+entry_name_num_chars(FsearchDatabaseEntry *entry) {
+    return (uint32_t)g_utf8_strlen(entry_get_name(entry), entry->name_len);
+}
+
+uint32_t
+db_entry_get_path_full_length(FsearchDatabaseEntry *entry) {
+    g_return_val_if_fail(entry, 0);
+
+    // Mirrors build_path_recursively() + db_entry_append_full_path(), but only counts characters.
+    uint32_t len = 0;
+    for (FsearchDatabaseEntry *folder = entry->parent; folder; folder = folder->parent) {
+        const char *name = entry_get_name(folder);
+        const uint16_t name_len = folder->name_len;
+        if (G_LIKELY(name_len > 0 && !(name_len == 1 && name[0] == G_DIR_SEPARATOR))) {
+            len += entry_name_num_chars(folder);
+        }
+        len += 1; // separator
+    }
+    if (G_LIKELY(entry->name_len > 0)) {
+        len += entry_name_num_chars(entry);
+    }
+    else {
+        len += 1; // root entry: just the separator
+    }
+    return len;
 }
 
 time_t
@@ -410,6 +440,34 @@ db_entry_compare_entries_by_type(FsearchDatabaseEntry **a, FsearchDatabaseEntry 
     return strcmp(file_type_a, file_type_b);
 }
 
+static uint32_t
+get_cached_path_length(FsearchDatabaseEntry *entry, GHashTable *cache) {
+    // The cache stores length + 1, so that a missing entry (NULL) can be told apart from a length of 0
+    gpointer cached = g_hash_table_lookup(cache, entry);
+    if (cached) {
+        return GPOINTER_TO_UINT(cached) - 1;
+    }
+    const uint32_t len = db_entry_get_path_full_length(entry);
+    g_hash_table_insert(cache, entry, GUINT_TO_POINTER(len + 1));
+    return len;
+}
+
+int
+db_entry_compare_entries_by_path_length(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data) {
+    FsearchDatabaseEntryCompareContext *comp_ctx = data;
+
+    const uint32_t len_a = get_cached_path_length(*a, comp_ctx->entry_to_path_length_table);
+    const uint32_t len_b = get_cached_path_length(*b, comp_ctx->entry_to_path_length_table);
+
+    if (len_a > len_b) {
+        return 1;
+    }
+    else if (len_a < len_b) {
+        return -1;
+    }
+    return 0;
+}
+
 static int
 compare_entries_by_property(FsearchDatabaseEntry **a,
                             FsearchDatabaseEntry **b,
@@ -430,6 +488,8 @@ compare_entries_by_property(FsearchDatabaseEntry **a,
         return db_entry_compare_entries_by_modification_time(a, b);
     case DATABASE_INDEX_PROPERTY_FILETYPE:
         return db_entry_compare_entries_by_type(a, b, ctx);
+    case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
+        return db_entry_compare_entries_by_path_length(a, b, ctx);
     default:
         return 0;
     }
@@ -944,6 +1004,7 @@ entry_new_with_attributes_va(FsearchDatabaseIndexPropertyFlags attribute_flags,
         case DATABASE_INDEX_PROPERTY_PATH_FULL:
         case DATABASE_INDEX_PROPERTY_FILETYPE:
         case DATABASE_INDEX_PROPERTY_EXTENSION:
+        case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
         case NUM_DATABASE_INDEX_PROPERTIES:
             g_assert_not_reached();
         }

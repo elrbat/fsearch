@@ -36,6 +36,7 @@ libfsearch_core_sources = [
     'fsearch_filter_manager.c',
     'fsearch_folder_monitor_event.c',
     'fsearch_main_context_utils.c',
+    'fsearch_media_info.c',
     'fsearch_query.c',
     'fsearch_query_match_data.c',
     'fsearch_query_matchers.c',
@@ -82,6 +83,10 @@ fsearch_core_deps = [
     dependency('pango', version: '>= 1.0'),
     dependency('libpcre2-8', version: '>= 10.21'),
     dependency('icu-uc', version: '>= 4.4'),
+    dependency('libavformat'),
+    dependency('libavcodec'),
+    dependency('libavutil'),
+    dependency('sqlite3'),
 ]
 
 fsearch_deps = fsearch_core_deps + [

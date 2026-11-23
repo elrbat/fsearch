@@ -6,6 +6,7 @@
 #include "fsearch_config.h"
 #include "fsearch_database_entry_info.h"
 #include "fsearch_file_utils.h"
+#include "fsearch_media_info.h"
 
 #include <glib/gi18n.h>
 #include <gtk/gtk.h>
@@ -96,6 +97,44 @@ try_get_entry_info(FsearchResultView *result_view, uint32_t row, FsearchDatabase
 }
 
 static void
+media_info_probe_done_cb(gpointer data) {
+    GtkWidget *widget = GTK_WIDGET(data);
+    gtk_widget_queue_draw(widget);
+    g_object_unref(widget);
+}
+
+// Text for the duration column. The duration isn't part of the file system index, so it's read from
+// the file in the background the first time a row gets drawn; the row is redrawn once it's known.
+static char *
+get_duration_text(FsearchResultView *result_view, FsearchDatabaseEntryInfo *info, bool read_if_missing) {
+    if (fsearch_database_entry_info_get_entry_type(info) == DATABASE_ENTRY_TYPE_FOLDER) {
+        return g_strdup("");
+    }
+    GString *ext = fsearch_database_entry_info_get_extension(info);
+    if (!ext || !fsearch_media_info_is_video_extension(ext->str)) {
+        return g_strdup("");
+    }
+
+    GString *path_full = fsearch_database_entry_info_get_path_full(info);
+    const int64_t mtime = (int64_t)fsearch_database_entry_info_get_mtime(info);
+    const int64_t size = (int64_t)fsearch_database_entry_info_get_size(info);
+
+    FsearchMediaInfo media_info;
+    if (fsearch_media_info_lookup(path_full->str, mtime, size, &media_info)) {
+        return fsearch_media_info_format_duration(media_info.duration_ms);
+    }
+
+    if (read_if_missing && result_view->list_view) {
+        GtkWidget *widget = GTK_WIDGET(result_view->list_view);
+        g_object_ref(widget);
+        if (!fsearch_media_info_probe_async(path_full->str, mtime, size, media_info_probe_done_cb, widget)) {
+            g_object_unref(widget);
+        }
+    }
+    return g_strdup("…");
+}
+
+static void
 set_pango_layout_attributes(PangoLayout *layout, FsearchDatabaseEntryInfo *info, FsearchDatabaseIndexProperty idx) {
     if (!info) {
         return;
@@ -165,6 +204,10 @@ fsearch_result_view_query_tooltip(FsearchResultView *view,
     case DATABASE_INDEX_PROPERTY_PATH_LENGTH: {
         GString *path_full = fsearch_database_entry_info_get_path_full(info);
         text = g_strdup_printf("%ld", g_utf8_strlen(path_full->str, path_full->len));
+        break;
+    }
+    case DATABASE_INDEX_PROPERTY_DURATION: {
+        text = get_duration_text(view, info, false);
         break;
     }
     case DATABASE_INDEX_PROPERTY_FILETYPE: {
@@ -461,6 +504,11 @@ fsearch_result_view_draw_row(FsearchResultView *result_view,
                 break;
             case DATABASE_INDEX_PROPERTY_EXTENSION: {
                 text = fsearch_database_entry_info_get_extension(info)->str;
+                break;
+            }
+            case DATABASE_INDEX_PROPERTY_DURATION: {
+                text_autofree = get_duration_text(result_view, info, true);
+                text = text_autofree;
                 break;
             }
             case DATABASE_INDEX_PROPERTY_PATH_LENGTH: {

@@ -3,6 +3,7 @@
 #include "fsearch_database_sort.h"
 
 #include "fsearch_database_entry.h"
+#include "fsearch_media_info.h"
 
 #include <glib.h>
 
@@ -71,6 +72,9 @@ fsearch_database_sort_order_chain_for_property(FsearchDatabaseIndexProperty prop
         // Same as FILETYPE: no fast index exists, the manual sort extends this with the previous chain.
         chain.properties[chain.length++] = DATABASE_INDEX_PROPERTY_PATH_LENGTH;
         break;
+    case DATABASE_INDEX_PROPERTY_DURATION:
+        chain.properties[chain.length++] = DATABASE_INDEX_PROPERTY_DURATION;
+        break;
     default:
         break;
     }
@@ -88,6 +92,43 @@ fsearch_database_sort_order_chain_prepend(FsearchDatabaseSortOrderChain chain, F
         result.properties[result.length++] = chain.properties[i];
     }
     return result;
+}
+
+// Makes sure the media info (e.g. the duration) of all video files is in the cache before sorting by it.
+// Files which are cached already (same path, mtime and size) are skipped, so only the first sort
+// has to read the files; later ones are instant.
+static void
+prepare_media_info(DynamicArray *files, GCancellable *cancellable) {
+    const uint32_t num_files = darray_get_num_items(files);
+    g_autoptr(GArray) jobs = g_array_new(FALSE, FALSE, sizeof(FsearchMediaJob));
+    g_array_set_clear_func(jobs, (GDestroyNotify)NULL);
+
+    for (uint32_t i = 0; i < num_files; ++i) {
+        if (cancellable && g_cancellable_is_cancelled(cancellable)) {
+            break;
+        }
+        FsearchDatabaseEntry *entry = darray_get_item(files, i);
+        if (!fsearch_media_info_is_video_extension(db_entry_get_extension(entry))) {
+            continue;
+        }
+        GString *path = db_entry_get_path_full(entry);
+        const int64_t mtime = (int64_t)db_entry_get_mtime(entry);
+        const int64_t size = (int64_t)db_entry_get_size(entry);
+        FsearchMediaInfo info;
+        if (fsearch_media_info_lookup(path->str, mtime, size, &info)) {
+            g_string_free(path, TRUE);
+            continue;
+        }
+        FsearchMediaJob job = {.path = g_string_free(path, FALSE), .mtime = mtime, .size = size};
+        g_array_append_val(jobs, job);
+    }
+
+    g_debug("[db_sort] reading media info of %u file(s)", jobs->len);
+    fsearch_media_info_probe_jobs((const FsearchMediaJob *)jobs->data, jobs->len, cancellable);
+
+    for (guint i = 0; i < jobs->len; ++i) {
+        g_free(g_array_index(jobs, FsearchMediaJob, i).path);
+    }
 }
 
 static DynamicArray *
@@ -224,6 +265,12 @@ fsearch_database_sort_results(FsearchDatabaseSortOrderChain old_chain,
     else if (new_sort_order == DATABASE_INDEX_PROPERTY_PATH_LENGTH) {
         // The path length of each entry is cached lazily in a (not thread safe) hash table
         parallel_sort = false;
+    }
+    else if (new_sort_order == DATABASE_INDEX_PROPERTY_DURATION) {
+        // Reads the duration of all videos which aren't cached yet, then sorts single threaded
+        // because the per-entry values are cached lazily in a (not thread safe) hash table
+        parallel_sort = false;
+        prepare_media_info(files_in, cancellable);
     }
 
     const bool folders_sorted = sort_order_affects_folders(new_sort_order);

@@ -21,6 +21,7 @@ typedef struct FsearchDatabaseEntryCompareContext {
     GHashTable *file_type_table;
     GHashTable *entry_to_file_type_table;
     GHashTable *entry_to_path_length_table;
+    GHashTable *entry_to_duration_table;
     FsearchDatabaseSortOrderChain chain;
 } FsearchDatabaseEntryCompareContext;
 
@@ -184,6 +185,14 @@ db_entry_compare_entries_by_chain(FsearchDatabaseEntry **a, FsearchDatabaseEntry
 
 int
 db_entry_compare_entries_by_path_length(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data);
+
+// Duration of the video, taken from the media info cache (entries without cached info sort first).
+int
+db_entry_compare_entries_by_duration(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data);
+
+// Same lookup as used for sorting: duration in ms from the cache, -1 if not available
+int64_t
+db_entry_get_cached_duration_ms(FsearchDatabaseEntry *entry);
 
 FsearchDatabaseEntry *
 db_entry_new(FsearchDatabaseIndexPropertyFlags attribute_flags,

@@ -127,6 +127,7 @@ static const FsearchKeyData INTERFACE_SECTION[] = {
     CONF_BOOL(show_type_column, false),
     CONF_BOOL(show_extension_column, true),
     CONF_BOOL(show_path_length_column, false),
+    CONF_BOOL(show_duration_column, false),
     CONF_BOOL(show_size_column, true),
     CONF_BOOL(show_modified_column, true),
     CONF_BOOL(sort_ascending, true),
@@ -136,6 +137,7 @@ static const FsearchKeyData INTERFACE_SECTION[] = {
     CONF_INT(type_column_width, 100),
     CONF_INT(extension_column_width, 100),
     CONF_INT(path_length_column_width, 100),
+    CONF_INT(duration_column_width, 100),
     CONF_INT(size_column_width, 75),
     CONF_INT(modified_column_width, 75),
     CONF_INT(name_column_pos, 0),
@@ -636,6 +638,7 @@ config_load(FsearchConfig *config) {
             config->show_type_column = false;
             config->show_extension_column = true;
             config->show_path_length_column = false;
+            config->show_duration_column = false;
             config->show_size_column = true;
             config->show_modified_column = true;
         }

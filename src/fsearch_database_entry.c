@@ -3,6 +3,7 @@
 #include "fsearch_database_entry_flags.h"
 #include "fsearch_database_index_properties.h"
 #include "fsearch_file_utils.h"
+#include "fsearch_media_info.h"
 #include "fsearch_string_utils.h"
 
 #include <gio/gio.h>
@@ -69,6 +70,7 @@ db_entry_compare_context_free(FsearchDatabaseEntryCompareContext *ctx) {
     g_clear_pointer(&ctx->file_type_table, g_hash_table_unref);
     g_clear_pointer(&ctx->entry_to_file_type_table, g_hash_table_unref);
     g_clear_pointer(&ctx->entry_to_path_length_table, g_hash_table_unref);
+    g_clear_pointer(&ctx->entry_to_duration_table, g_hash_table_unref);
     g_clear_pointer(&ctx, free);
 }
 
@@ -80,6 +82,7 @@ db_entry_compare_context_new(FsearchDatabaseSortOrderChain chain) {
     ctx->file_type_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
     ctx->entry_to_file_type_table = g_hash_table_new(NULL, NULL);
     ctx->entry_to_path_length_table = g_hash_table_new(NULL, NULL);
+    ctx->entry_to_duration_table = g_hash_table_new(NULL, NULL);
     ctx->chain = chain;
     return ctx;
 }
@@ -468,6 +471,51 @@ db_entry_compare_entries_by_path_length(FsearchDatabaseEntry **a, FsearchDatabas
     return 0;
 }
 
+int64_t
+db_entry_get_cached_duration_ms(FsearchDatabaseEntry *entry) {
+    g_return_val_if_fail(entry, -1);
+    if (db_entry_is_folder(entry)) {
+        return -1;
+    }
+    if (!fsearch_media_info_is_video_extension(db_entry_get_extension(entry))) {
+        return -1;
+    }
+    g_autoptr(GString) path = db_entry_get_path_full(entry);
+    FsearchMediaInfo info;
+    if (!fsearch_media_info_lookup(path->str, (int64_t)db_entry_get_mtime(entry), (int64_t)db_entry_get_size(entry), &info)) {
+        return -1;
+    }
+    return info.duration_ms;
+}
+
+int
+db_entry_compare_entries_by_duration(FsearchDatabaseEntry **a, FsearchDatabaseEntry **b, gpointer data) {
+    FsearchDatabaseEntryCompareContext *comp_ctx = data;
+    GHashTable *cache = comp_ctx->entry_to_duration_table;
+
+    // The cache stores duration + 2, so that a missing entry (NULL) can be told apart from "unknown" (-1)
+    int64_t durations[2];
+    FsearchDatabaseEntry *entries[2] = {*a, *b};
+    for (int i = 0; i < 2; ++i) {
+        gpointer cached = g_hash_table_lookup(cache, entries[i]);
+        if (cached) {
+            durations[i] = (int64_t)GPOINTER_TO_SIZE(cached) - 2;
+        }
+        else {
+            durations[i] = db_entry_get_cached_duration_ms(entries[i]);
+            g_hash_table_insert(cache, entries[i], GSIZE_TO_POINTER((gsize)(durations[i] + 2)));
+        }
+    }
+
+    if (durations[0] > durations[1]) {
+        return 1;
+    }
+    else if (durations[0] < durations[1]) {
+        return -1;
+    }
+    return 0;
+}
+
 static int
 compare_entries_by_property(FsearchDatabaseEntry **a,
                             FsearchDatabaseEntry **b,
@@ -490,6 +538,8 @@ compare_entries_by_property(FsearchDatabaseEntry **a,
         return db_entry_compare_entries_by_type(a, b, ctx);
     case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
         return db_entry_compare_entries_by_path_length(a, b, ctx);
+    case DATABASE_INDEX_PROPERTY_DURATION:
+        return db_entry_compare_entries_by_duration(a, b, ctx);
     default:
         return 0;
     }
@@ -1005,6 +1055,7 @@ entry_new_with_attributes_va(FsearchDatabaseIndexPropertyFlags attribute_flags,
         case DATABASE_INDEX_PROPERTY_FILETYPE:
         case DATABASE_INDEX_PROPERTY_EXTENSION:
         case DATABASE_INDEX_PROPERTY_PATH_LENGTH:
+        case DATABASE_INDEX_PROPERTY_DURATION:
         case NUM_DATABASE_INDEX_PROPERTIES:
             g_assert_not_reached();
         }

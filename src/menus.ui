@@ -281,6 +281,10 @@
                 <attribute name="action">win.show_path_length_column</attribute>
             </item>
             <item>
+                <attribute name="label" translatable="yes">Duration</attribute>
+                <attribute name="action">win.show_duration_column</attribute>
+            </item>
+            <item>
                 <attribute name="label" translatable="yes">Size</attribute>
                 <attribute name="action">win.show_size_column</attribute>
             </item>

@@ -26,6 +26,7 @@
 #include "fsearch_database.h"
 #include "fsearch_database_info.h"
 #include "fsearch_database_search_info.h"
+#include "fsearch_filter_panel.h"
 #include "fsearch_list_view.h"
 #include "fsearch_listview_popup.h"
 #include "fsearch_result_view.h"
@@ -60,6 +61,12 @@ struct _FsearchApplicationWindow {
     GtkWidget *main_search_overlay_stack;
 
     GtkWidget *statusbar;
+
+    GtkWidget *filter_panel;
+    GtkWidget *filter_panel_button;
+    // Reading the media info of all videos in the results: 1 = searching without the media conditions,
+    // 2 = sorting by duration (which reads the files), 0 = not analyzing
+    int analysis_stage;
 
     char *active_filter_name;
 
@@ -152,6 +159,25 @@ get_query_text(FsearchApplicationWindow *win) {
     return gtk_entry_get_text(GTK_ENTRY(win->search_entry));
 }
 
+// The text of the search entry combined with the conditions of the filter panel.
+// With `include_media` false, conditions which need information from inside video files are left out.
+static char *
+get_effective_query_text(FsearchApplicationWindow *win, bool include_media) {
+    const char *text = get_query_text(win);
+    g_autofree char *panel_query = fsearch_filter_panel_widget_get_query(win->filter_panel, include_media);
+    if (!panel_query) {
+        return g_strdup(text);
+    }
+    if (!text || text[0] == '\0') {
+        return g_steal_pointer(&panel_query);
+    }
+    // An OR in the typed text must not swallow the conditions of the panel: (a || b) ext:mp4
+    if (strchr(text, '|')) {
+        return g_strdup_printf("(%s) %s", text, panel_query);
+    }
+    return g_strdup_printf("%s %s", text, panel_query);
+}
+
 static FsearchApplicationWindow *
 get_window_for_id(uint32_t win_id) {
     FsearchApplication *app = FSEARCH_APPLICATION_DEFAULT;
@@ -166,7 +192,9 @@ is_empty_search(FsearchApplicationWindow *win) {
     FsearchConfig *config = fsearch_application_get_config(app);
 
     if (text && text[0] == '\0' && config->hide_results_on_empty_search) {
-        return TRUE;
+        // Active filters of the panel are a search as well
+        g_autofree char *panel_query = fsearch_filter_panel_widget_get_query(win->filter_panel, true);
+        return panel_query ? FALSE : TRUE;
     }
     return FALSE;
 }
@@ -506,6 +534,14 @@ on_sort_finished(FsearchDatabase *db, guint id, FsearchDatabaseSearchInfo *info,
         if (!sort_info_matches_tracked_work(win, info)) {
             return;
         }
+        if (win->analysis_stage == 2) {
+            // The videos are analyzed now: run the real search, including the filters for video properties
+            win->analysis_stage = 0;
+            g_clear_pointer(&win->work_sort, fsearch_database_work_unref);
+            fsearch_filter_panel_widget_set_analyzing(win->filter_panel, false);
+            perform_search(win);
+            return;
+        }
         apply_search_info(win, info, true);
 
         g_clear_pointer(&win->work_sort, fsearch_database_work_unref);
@@ -551,6 +587,19 @@ on_search_finished(FsearchDatabase *db, guint id, FsearchDatabaseSearchInfo *inf
         }
         apply_search_info(win, info, true);
         g_clear_pointer(&win->work_search, fsearch_database_work_unref);
+        if (win->analysis_stage == 1) {
+            // Found all videos which match the other filters: read their media info by sorting by duration
+            win->analysis_stage = 2;
+            const guint win_id = gtk_application_window_get_id(GTK_APPLICATION_WINDOW(win));
+            if (win->work_sort) {
+                fsearch_database_work_cancel(win->work_sort);
+            }
+            g_clear_pointer(&win->work_sort, fsearch_database_work_unref);
+            win->work_sort = fsearch_database_work_new_sort(win_id,
+                                                            DATABASE_INDEX_PROPERTY_DURATION,
+                                                            fsearch_list_view_get_sort_direction(win->result_view->list_view));
+            fsearch_database_queue_work(win->db, win->work_sort);
+        }
     }
 }
 
@@ -565,13 +614,16 @@ on_search_started(FsearchDatabase *db, gpointer data, gpointer user_data) {
     return;
 }
 
+// With `analysis` the conditions about the contents of video files are left out. The window then sorts these
+// results by duration, which reads the media info of all videos in them (see fsearch_database_sort.c), and
+// afterwards runs the normal search again, so that the media conditions see the freshly read information.
 static void
-perform_search(FsearchApplicationWindow *win) {
+perform_search_ex(FsearchApplicationWindow *win, bool analysis) {
     if (!win) {
         return;
     }
 
-    const gchar *text = get_query_text(win);
+    g_autofree char *text = get_effective_query_text(win, !analysis);
     const guint win_id = gtk_application_window_get_id(GTK_APPLICATION_WINDOW(win));
     FsearchFilter *filter = get_active_filter(win);
     FsearchConfig *config = fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT);
@@ -580,12 +632,48 @@ perform_search(FsearchApplicationWindow *win) {
         fsearch_database_work_cancel(win->work_search);
     }
     g_clear_pointer(&win->work_search, fsearch_database_work_unref);
+    if (!analysis && win->analysis_stage != 0) {
+        // a new search replaces a running analysis
+        win->analysis_stage = 0;
+        if (win->work_sort) {
+            fsearch_database_work_cancel(win->work_sort);
+            g_clear_pointer(&win->work_sort, fsearch_database_work_unref);
+        }
+        fsearch_filter_panel_widget_set_analyzing(win->filter_panel, false);
+    }
     win->work_search = fsearch_database_work_new_search(win_id,
                                                         query,
                                                         fsearch_list_view_get_sort_order(win->result_view->list_view),
                                                         fsearch_list_view_get_sort_direction(win->result_view->list_view));
     g_clear_pointer(&filter, fsearch_filter_unref);
     fsearch_database_queue_work(win->db, win->work_search);
+}
+
+static void
+perform_search(FsearchApplicationWindow *win) {
+    perform_search_ex(win, false);
+}
+
+static void
+on_filter_panel_changed(gpointer user_data) {
+    FsearchApplicationWindow *win = user_data;
+    g_assert(FSEARCH_IS_APPLICATION_WINDOW(win));
+    perform_search(win);
+}
+
+static void
+on_filter_panel_analyze(gpointer user_data) {
+    FsearchApplicationWindow *win = user_data;
+    g_assert(FSEARCH_IS_APPLICATION_WINDOW(win));
+    perform_search_ex(win, true);
+    win->analysis_stage = 1;
+    fsearch_filter_panel_widget_set_analyzing(win->filter_panel, true);
+}
+
+static void
+on_filter_panel_button_toggled(GtkToggleButton *button, gpointer user_data) {
+    FsearchApplicationWindow *win = user_data;
+    fsearch_filter_panel_widget_set_revealed(win->filter_panel, gtk_toggle_button_get_active(button));
 }
 
 static gboolean
@@ -1026,6 +1114,17 @@ fsearch_application_window_init(FsearchApplicationWindow *self) {
     g_assert(FSEARCH_IS_APPLICATION_WINDOW(self));
 
     gtk_widget_init_template(GTK_WIDGET(self));
+
+    // Panel with filters, below the search entry and above the results
+    self->filter_panel = fsearch_filter_panel_widget_new(on_filter_panel_changed, on_filter_panel_analyze, self);
+    gtk_box_pack_start(GTK_BOX(self->main_box), self->filter_panel, FALSE, TRUE, 0);
+    gtk_box_reorder_child(GTK_BOX(self->main_box), self->filter_panel, 1);
+
+    self->filter_panel_button = gtk_toggle_button_new_with_label(_("Filters"));
+    gtk_widget_set_tooltip_text(self->filter_panel_button, _("Show or hide the filter panel (Ctrl+Shift+F)"));
+    g_signal_connect(self->filter_panel_button, "toggled", G_CALLBACK(on_filter_panel_button_toggled), self);
+    gtk_box_pack_end(GTK_BOX(self->search_box), self->filter_panel_button, FALSE, FALSE, 0);
+    gtk_widget_show(self->filter_panel_button);
 
     guint id = gtk_application_window_get_id(GTK_APPLICATION_WINDOW(self));
     self->result_view = fsearch_result_view_new(id);
@@ -1469,6 +1568,13 @@ fsearch_application_window_update_listview_config(FsearchApplicationWindow *win)
     gtk_widget_set_has_tooltip(GTK_WIDGET(win->result_view->list_view), config->enable_list_tooltips);
 
     redraw_listview(win);
+}
+
+void
+fsearch_application_window_toggle_filter_panel(FsearchApplicationWindow *self) {
+    g_assert(FSEARCH_IS_APPLICATION_WINDOW(self));
+    GtkToggleButton *button = GTK_TOGGLE_BUTTON(self->filter_panel_button);
+    gtk_toggle_button_set_active(button, !gtk_toggle_button_get_active(button));
 }
 
 void

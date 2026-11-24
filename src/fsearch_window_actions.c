@@ -800,6 +800,12 @@ fsearch_window_action_close_window(GSimpleAction *action, GVariant *variant, gpo
 }
 
 static void
+fsearch_window_action_toggle_filter_panel(GSimpleAction *action, GVariant *variant, gpointer user_data) {
+    FsearchApplicationWindow *self = user_data;
+    fsearch_application_window_toggle_filter_panel(self);
+}
+
+static void
 fsearch_window_action_toggle_app_menu(GSimpleAction *action, GVariant *variant, gpointer user_data) {
     FsearchApplicationWindow *self = user_data;
     fsearch_application_window_toggle_app_menu(self);
@@ -1175,6 +1181,7 @@ action_toggle_state_cb(GSimpleAction *saction, GVariant *parameter, gpointer use
 
 static GActionEntry FsearchWindowActions[] = {
     {"toggle_app_menu", fsearch_window_action_toggle_app_menu},
+    {"toggle_filter_panel", fsearch_window_action_toggle_filter_panel},
     {"open", fsearch_window_action_open},
     {"open_with", fsearch_window_action_open_with, "s"},
     {"open_with_other", fsearch_window_action_open_with_other, "s"},
@@ -1231,6 +1238,7 @@ fsearch_window_actions_update(FsearchApplicationWindow *self) {
     const bool has_file_manager_on_bus = fsearch_application_has_file_manager_on_bus(FSEARCH_APPLICATION_DEFAULT);
 
     action_set_enabled(group, "toggle_app_menu", TRUE);
+    action_set_enabled(group, "toggle_filter_panel", TRUE);
     action_set_enabled(group, "close_window", TRUE);
     action_set_enabled(group, "select_all", num_rows >= 1 ? TRUE : FALSE);
     action_set_enabled(group, "deselect_all", num_rows_selected);

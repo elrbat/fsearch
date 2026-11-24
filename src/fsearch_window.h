@@ -112,4 +112,7 @@ fsearch_application_window_get_entry_info_for_row(FsearchApplicationWindow *self
 
 void
 fsearch_application_window_toggle_app_menu(FsearchApplicationWindow *self);
+
+void
+fsearch_application_window_toggle_filter_panel(FsearchApplicationWindow *self);
 G_END_DECLS

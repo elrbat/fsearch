@@ -4,6 +4,8 @@ test_size_utils = executable('test_size_utils', 'test_size_utils.c', dependencie
 test_string_utils = executable('test_string_utils', 'test_string_utils.c', dependencies : libfsearch_core_dep)
 test_time_utils = executable('test_time_utils', 'test_time_utils.c', dependencies : libfsearch_core_dep)
 test_media_info = executable('test_media_info', 'test_media_info.c', dependencies : libfsearch_core_dep)
+test_query_media = executable('test_query_media', 'test_query_media.c', dependencies : libfsearch_core_dep)
+test_filter_panel_query = executable('test_filter_panel_query', 'test_filter_panel_query.c', dependencies : libfsearch_core_dep)
 test_database_entry = executable('test_database_entry', 'test_database_entry.c', dependencies : libfsearch_core_dep)
 test_database_include = executable('test_database_include', 'test_database_include.c', dependencies : libfsearch_core_dep)
 test_database_exclude = executable('test_database_exclude', 'test_database_exclude.c', dependencies : libfsearch_core_dep)
@@ -71,6 +73,20 @@ test('test_array',
 )
 test('test_media_info',
      test_media_info,
+     env: [
+       'G_TEST_SRCDIR=@0@'.format(meson.current_source_dir()),
+       'G_TEST_BUILDDIR=@0@'.format(meson.current_build_dir()),
+     ],
+)
+test('test_filter_panel_query',
+     test_filter_panel_query,
+     env: [
+       'G_TEST_SRCDIR=@0@'.format(meson.current_source_dir()),
+       'G_TEST_BUILDDIR=@0@'.format(meson.current_build_dir()),
+     ],
+)
+test('test_query_media',
+     test_query_media,
      env: [
        'G_TEST_SRCDIR=@0@'.format(meson.current_source_dir()),
        'G_TEST_BUILDDIR=@0@'.format(meson.current_build_dir()),

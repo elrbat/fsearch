@@ -51,6 +51,37 @@ fsearch_media_info_probe_async(const char *path,
                                FsearchMediaInfoDoneFunc done,
                                gpointer user_data);
 
+// Resolution class of a video as used by the "res:" search function and the filter panel:
+// 480 (SD and below), 720, 1080, 1440, 2160 (4K) or 4320 (8K). Both dimensions are taken into account,
+// so e.g. 1920x800 (widescreen film), 1440x1080 and portrait 1080x1920 videos are all "1080".
+int32_t
+fsearch_media_info_resolution_class(int32_t width, int32_t height);
+
+// Maps common codec names to the name libavcodec uses (h265 -> hevc, x264 -> h264, xvid -> mpeg4, ...)
+// and lower-cases it. Free with g_free.
+char *
+fsearch_media_info_normalize_codec_name(const char *name);
+
+// Parsers for the values of the search functions duration:, res:, fps: and bitrate:. They all fill the
+// start (and end) of the value in the unit used by the matchers: milliseconds for durations, the resolution
+// class (see above), 1/100 fps and kb/s. Return false if the text isn't a valid value.
+// Durations: "90" (seconds), "90s", "5m", "1.5h", "1h30m", "5:30", "1:02:03". `end` is the end of the precision
+// of the given time (e.g. "5m" covers 5:00 to 5:59).
+bool
+fsearch_media_info_parse_duration(const char *str, int64_t *start_ms, int64_t *end_ms);
+
+// Resolution classes: sd, hd (720p), fhd (1080p), qhd/2k (1440p), uhd/4k (2160p), 8k, or numbers like 1080 / 1080p
+bool
+fsearch_media_info_parse_resolution_class(const char *str, int64_t *num_out, int64_t *num_2_out);
+
+// Frame rates like "30", "29.97", "23.976"
+bool
+fsearch_media_info_parse_frame_rate(const char *str, int64_t *num_out, int64_t *num_2_out);
+
+// Bit rates like "800" (kb/s), "800k", "5m", "5mbps"
+bool
+fsearch_media_info_parse_bit_rate(const char *str, int64_t *num_out, int64_t *num_2_out);
+
 // "H:MM:SS" or "M:SS"; empty string if the duration is unknown. Free with g_free.
 char *
 fsearch_media_info_format_duration(int64_t duration_ms);

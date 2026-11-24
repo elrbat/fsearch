@@ -95,6 +95,58 @@ fsearch_query_node_new_size(FsearchQueryFlags flags,
                             int64_t size_end,
                             FsearchQueryNodeComparison comp_type);
 
+// Search functions for properties which are read from inside video files (see fsearch_media_info.h).
+// They only match video files whose media info is in the cache.
+FsearchQueryNode *
+fsearch_query_node_new_duration(FsearchQueryFlags flags,
+                                int64_t start_ms,
+                                int64_t end_ms,
+                                FsearchQueryNodeComparison comp_type);
+
+// Compares the resolution class (480, 720, 1080, 1440, 2160, 4320), see fsearch_media_info_resolution_class()
+FsearchQueryNode *
+fsearch_query_node_new_resolution(FsearchQueryFlags flags,
+                                  int64_t start,
+                                  int64_t end,
+                                  FsearchQueryNodeComparison comp_type);
+
+FsearchQueryNode *
+fsearch_query_node_new_width(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type);
+
+FsearchQueryNode *
+fsearch_query_node_new_height(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type);
+
+// Values are in 1/100 frames per second
+FsearchQueryNode *
+fsearch_query_node_new_fps(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type);
+
+// Values are in kilobits per second
+FsearchQueryNode *
+fsearch_query_node_new_bitrate(FsearchQueryFlags flags,
+                               int64_t start,
+                               int64_t end,
+                               FsearchQueryNodeComparison comp_type);
+
+// `search_term` is a list of codec names separated by ';'
+FsearchQueryNode *
+fsearch_query_node_new_codec(const char *search_term, FsearchQueryFlags flags);
+
+typedef enum {
+    FSEARCH_QUERY_MEDIA_STATUS_PENDING = 1,    // video whose media info hasn't been read yet
+    FSEARCH_QUERY_MEDIA_STATUS_UNREADABLE = 2, // video which couldn't be read (corrupt, not a real video)
+    FSEARCH_QUERY_MEDIA_STATUS_OK = 3,         // video with known media info
+} FsearchQueryMediaStatus;
+
+FsearchQueryNode *
+fsearch_query_node_new_media_status(FsearchQueryFlags flags, FsearchQueryMediaStatus status);
+
+// Number of characters of the full path (works for files and folders)
+FsearchQueryNode *
+fsearch_query_node_new_pathlen(FsearchQueryFlags flags,
+                               int64_t start,
+                               int64_t end,
+                               FsearchQueryNodeComparison comp_type);
+
 FsearchQueryNode *
 fsearch_query_node_new_depth(FsearchQueryFlags flags,
                              int64_t child_folder_count_start,

@@ -1,6 +1,7 @@
 #define G_LOG_DOMAIN "fsearch-query-node"
 
 #include "fsearch_query_node.h"
+#include "fsearch_media_info.h"
 #include "fsearch_limits.h"
 #include "fsearch_query_matchers.h"
 #include "fsearch_string_utils.h"
@@ -137,6 +138,95 @@ fsearch_query_node_new_depth(FsearchQueryFlags flags,
                             fsearch_query_matcher_depth,
                             NULL,
                             flags);
+}
+
+static FsearchQueryNode *
+new_media_numeric_node(int64_t start,
+                       int64_t end,
+                       FsearchQueryNodeComparison comp_type,
+                       const char *description,
+                       FsearchQueryNodeMatchFunc search_func,
+                       FsearchQueryFlags flags) {
+    FsearchQueryNode *qnode = new_numeric_node(start, end, comp_type, description, search_func, NULL, flags);
+    qnode->flags |= QUERY_FLAG_FILES_ONLY;
+    return qnode;
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_duration(FsearchQueryFlags flags, int64_t start_ms, int64_t end_ms, FsearchQueryNodeComparison comp_type) {
+    if (comp_type == FSEARCH_QUERY_NODE_COMPARISON_EQUAL && start_ms != end_ms) {
+        // "duration:=5m" means everything within that minute, not exactly 5:00.000
+        comp_type = FSEARCH_QUERY_NODE_COMPARISON_RANGE;
+    }
+    if (comp_type == FSEARCH_QUERY_NODE_COMPARISON_RANGE && end_ms - start_ms == 1000) {
+        // A duration given to the second (e.g. "5:30" or "90s") matches what the duration column shows,
+        // which is rounded: container durations are rarely exact, so "65s" must also find 64.98 seconds.
+        start_ms = MAX(0, start_ms - 500);
+        end_ms = MAX(0, end_ms - 500);
+    }
+    return new_media_numeric_node(start_ms, end_ms, comp_type, "duration", fsearch_query_matcher_duration, flags);
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_resolution(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type) {
+    return new_media_numeric_node(start, end, comp_type, "resolution", fsearch_query_matcher_resolution, flags);
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_width(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type) {
+    return new_media_numeric_node(start, end, comp_type, "width", fsearch_query_matcher_width, flags);
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_height(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type) {
+    return new_media_numeric_node(start, end, comp_type, "height", fsearch_query_matcher_height, flags);
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_fps(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type) {
+    return new_media_numeric_node(start, end, comp_type, "fps", fsearch_query_matcher_fps, flags);
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_bitrate(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type) {
+    return new_media_numeric_node(start, end, comp_type, "bitrate", fsearch_query_matcher_bitrate, flags);
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_pathlen(FsearchQueryFlags flags, int64_t start, int64_t end, FsearchQueryNodeComparison comp_type) {
+    return new_numeric_node(start, end, comp_type, "pathlen", fsearch_query_matcher_pathlen, NULL, flags);
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_media_status(FsearchQueryFlags flags, FsearchQueryMediaStatus status) {
+    FsearchQueryNode *qnode =
+        new_media_numeric_node(status, status, FSEARCH_QUERY_NODE_COMPARISON_EQUAL, "media", fsearch_query_matcher_media_status, flags);
+    g_free(qnode->needle);
+    qnode->needle = g_strdup(status == FSEARCH_QUERY_MEDIA_STATUS_PENDING
+                                 ? "pending"
+                                 : (status == FSEARCH_QUERY_MEDIA_STATUS_UNREADABLE ? "unreadable" : "ok"));
+    return qnode;
+}
+
+FsearchQueryNode *
+fsearch_query_node_new_codec(const char *search_term, FsearchQueryFlags flags) {
+    FsearchQueryNode *qnode = calloc(1, sizeof(FsearchQueryNode));
+    g_assert(qnode);
+    qnode->type = FSEARCH_QUERY_NODE_TYPE_QUERY;
+    qnode->description = g_string_new("codec");
+    qnode->search_func = fsearch_query_matcher_codec;
+    qnode->highlight_func = NULL;
+    qnode->flags = flags | QUERY_FLAG_FILES_ONLY;
+    qnode->needle = g_strdup(search_term);
+    qnode->search_term_list = g_ptr_array_new_full(4, g_free);
+    g_auto(GStrv) search_terms = g_strsplit(search_term, ";", -1);
+    for (guint i = 0; search_terms[i]; ++i) {
+        if (!*search_terms[i]) {
+            continue;
+        }
+        g_ptr_array_add(qnode->search_term_list, fsearch_media_info_normalize_codec_name(search_terms[i]));
+    }
+    return qnode;
 }
 
 FsearchQueryNode *

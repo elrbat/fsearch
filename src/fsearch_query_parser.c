@@ -1,6 +1,7 @@
 #include "fsearch_query_parser.h"
 
 #include "fsearch_filter.h"
+#include "fsearch_media_info.h"
 #include "fsearch_query_lexer.h"
 #include "fsearch_query_node.h"
 #include "fsearch_size_utils.h"
@@ -66,6 +67,33 @@ static GList *
 parse_function_parent(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
 
 static GList *
+parse_function_duration(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
+parse_function_resolution(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
+parse_function_width(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
+parse_function_height(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
+parse_function_fps(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
+parse_function_bitrate(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
+parse_function_pathlen(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
+parse_function_codec(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
+parse_function_media(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags);
+
+static GList *
 get_implicit_and_if_necessary(FsearchQueryParseContext *parse_ctx,
                               FsearchQueryToken last_token,
                               FsearchQueryToken next_token);
@@ -117,6 +145,17 @@ FsearchTokenFunction supported_functions[] = {
     {"datemodified", parse_function_date_modified},
     {"empty", parse_function_empty},
     {"ext", parse_function_extension},
+    {"duration", parse_function_duration},
+    {"length", parse_function_duration},
+    {"res", parse_function_resolution},
+    {"resolution", parse_function_resolution},
+    {"width", parse_function_width},
+    {"height", parse_function_height},
+    {"fps", parse_function_fps},
+    {"bitrate", parse_function_bitrate},
+    {"pathlen", parse_function_pathlen},
+    {"codec", parse_function_codec},
+    {"media", parse_function_media},
     {"parent", parse_function_parent},
     {"parents", parse_function_depth},
     {"size", parse_function_size},
@@ -334,6 +373,87 @@ parse_function_date_modified(FsearchQueryParseContext *parse_ctx, bool is_empty_
                                   "date-modified",
                                   fsearch_query_node_new_date_modified,
                                   (FsearchQueryIntegerParserFunc *)fsearch_date_time_parse_interval);
+}
+
+
+// ---- Functions for properties of video files -------------------------------------------------------
+
+static GList *
+parse_function_duration(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    return parse_numeric_function(parse_ctx, is_empty_field, flags, "duration", fsearch_query_node_new_duration, fsearch_media_info_parse_duration);
+}
+
+static GList *
+parse_function_resolution(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    return parse_numeric_function(parse_ctx,
+                                  is_empty_field,
+                                  flags,
+                                  "res",
+                                  fsearch_query_node_new_resolution,
+                                  fsearch_media_info_parse_resolution_class);
+}
+
+static GList *
+parse_function_width(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    return parse_numeric_function(parse_ctx, is_empty_field, flags, "width", fsearch_query_node_new_width, parse_integer);
+}
+
+static GList *
+parse_function_height(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    return parse_numeric_function(parse_ctx, is_empty_field, flags, "height", fsearch_query_node_new_height, parse_integer);
+}
+
+static GList *
+parse_function_fps(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    return parse_numeric_function(parse_ctx, is_empty_field, flags, "fps", fsearch_query_node_new_fps, fsearch_media_info_parse_frame_rate);
+}
+
+static GList *
+parse_function_bitrate(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    return parse_numeric_function(parse_ctx,
+                                  is_empty_field,
+                                  flags,
+                                  "bitrate",
+                                  fsearch_query_node_new_bitrate,
+                                  fsearch_media_info_parse_bit_rate);
+}
+
+static GList *
+parse_function_pathlen(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    return parse_numeric_function(parse_ctx, is_empty_field, flags, "pathlen", fsearch_query_node_new_pathlen, parse_integer);
+}
+
+static GList *
+parse_function_codec(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    if (is_empty_field) {
+        return new_list(fsearch_query_node_new_match_nothing());
+    }
+    g_autoptr(GString) token_value = NULL;
+    if (expect_word(parse_ctx->lexer, &token_value)) {
+        return new_list(fsearch_query_node_new_codec(token_value->str, flags));
+    }
+    return new_list(fsearch_query_node_new_match_nothing());
+}
+
+// media:pending | media:unreadable | media:ok
+static GList *
+parse_function_media(FsearchQueryParseContext *parse_ctx, bool is_empty_field, FsearchQueryFlags flags) {
+    if (is_empty_field) {
+        return new_list(fsearch_query_node_new_match_nothing());
+    }
+    g_autoptr(GString) token_value = NULL;
+    if (expect_word(parse_ctx->lexer, &token_value)) {
+        if (!g_ascii_strcasecmp(token_value->str, "pending")) {
+            return new_list(fsearch_query_node_new_media_status(flags, FSEARCH_QUERY_MEDIA_STATUS_PENDING));
+        }
+        if (!g_ascii_strcasecmp(token_value->str, "unreadable") || !g_ascii_strcasecmp(token_value->str, "corrupt")) {
+            return new_list(fsearch_query_node_new_media_status(flags, FSEARCH_QUERY_MEDIA_STATUS_UNREADABLE));
+        }
+        if (!g_ascii_strcasecmp(token_value->str, "ok")) {
+            return new_list(fsearch_query_node_new_media_status(flags, FSEARCH_QUERY_MEDIA_STATUS_OK));
+        }
+    }
+    return new_list(fsearch_query_node_new_match_nothing());
 }
 
 static GList *

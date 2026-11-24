@@ -34,6 +34,33 @@ uint32_t
 fsearch_query_matcher_size(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
 
 uint32_t
+fsearch_query_matcher_duration(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
+fsearch_query_matcher_resolution(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
+fsearch_query_matcher_width(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
+fsearch_query_matcher_height(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
+fsearch_query_matcher_fps(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
+fsearch_query_matcher_bitrate(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
+fsearch_query_matcher_codec(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
+fsearch_query_matcher_media_status(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
+fsearch_query_matcher_pathlen(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
+
+uint32_t
 fsearch_query_matcher_regex(FsearchQueryNode *node, FsearchQueryMatchData *match_data);
 
 uint32_t

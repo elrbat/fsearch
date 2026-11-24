@@ -19,7 +19,7 @@ typedef struct {
     FsearchMediaInfo info;
 } CacheEntry;
 
-static GMutex cache_mutex;
+static GRWLock cache_lock;
 static GHashTable *cache = NULL; // char *path -> CacheEntry *
 static sqlite3 *cache_db = NULL;
 static sqlite3_stmt *insert_stmt = NULL;
@@ -48,7 +48,7 @@ cache_entry_free(gpointer data) {
     g_free(data);
 }
 
-// Must be called with cache_mutex held
+// Must be called with the cache lock held for writing
 static void
 cache_load_from_db(void) {
     sqlite3_stmt *stmt = NULL;
@@ -82,10 +82,10 @@ cache_load_from_db(void) {
     sqlite3_finalize(stmt);
 }
 
-// Must be called with cache_mutex held
+// Must be called with the cache lock held for writing
 static void
-cache_init_locked(void) {
-    if (g_once_init_enter(&cache_initialized)) {
+cache_init_body(void) {
+    {
         av_log_set_level(AV_LOG_QUIET);
         cache = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, cache_entry_free);
 
@@ -133,6 +133,15 @@ cache_init_locked(void) {
             g_warning("[media_info] failed to open cache database %s", db_path);
             g_clear_pointer(&cache_db, sqlite3_close);
         }
+    }
+}
+
+static void
+cache_ensure_init(void) {
+    if (g_once_init_enter(&cache_initialized)) {
+        g_rw_lock_writer_lock(&cache_lock);
+        cache_init_body();
+        g_rw_lock_writer_unlock(&cache_lock);
         g_once_init_leave(&cache_initialized, 1);
     }
 }
@@ -142,14 +151,15 @@ fsearch_media_info_lookup(const char *path, int64_t mtime, int64_t size, Fsearch
     g_return_val_if_fail(path, false);
     g_return_val_if_fail(out, false);
 
-    g_mutex_lock(&cache_mutex);
-    cache_init_locked();
+    // Searches look up many files from several threads at once, so readers don't block each other
+    cache_ensure_init();
+    g_rw_lock_reader_lock(&cache_lock);
     const CacheEntry *entry = g_hash_table_lookup(cache, path);
     const bool found = entry && entry->mtime == mtime && entry->size == size;
     if (found) {
         *out = entry->info;
     }
-    g_mutex_unlock(&cache_mutex);
+    g_rw_lock_reader_unlock(&cache_lock);
     return found;
 }
 
@@ -160,8 +170,8 @@ cache_store(const char *path, int64_t mtime, int64_t size, const FsearchMediaInf
     entry->size = size;
     entry->info = *info;
 
-    g_mutex_lock(&cache_mutex);
-    cache_init_locked();
+    cache_ensure_init();
+    g_rw_lock_writer_lock(&cache_lock);
     g_hash_table_replace(cache, g_strdup(path), entry);
     if (insert_stmt) {
         sqlite3_reset(insert_stmt);
@@ -177,7 +187,7 @@ cache_store(const char *path, int64_t mtime, int64_t size, const FsearchMediaInf
         sqlite3_step(insert_stmt);
         sqlite3_reset(insert_stmt);
     }
-    g_mutex_unlock(&cache_mutex);
+    g_rw_lock_writer_unlock(&cache_lock);
 }
 
 typedef struct {
@@ -431,3 +441,274 @@ fsearch_media_info_format_frame_rate(double frame_rate) {
     }
     return g_strdup(buf);
 }
+
+int32_t
+fsearch_media_info_resolution_class(int32_t width, int32_t height) {
+    if (width <= 0 || height <= 0) {
+        return 0;
+    }
+    const int32_t long_side = MAX(width, height);
+    const int32_t short_side = MIN(width, height);
+
+    // Classify by both sides and take the higher class. A film in 2.39:1 has a short side of ~800 but is
+    // still 1080p (long side 1920); a 4:3 HD video (1440x1080) has a short side of 1080.
+    int32_t by_long = 480;
+    if (long_side >= 7000) {
+        by_long = 4320;
+    }
+    else if (long_side >= 3600) {
+        by_long = 2160;
+    }
+    else if (long_side >= 2400) {
+        by_long = 1440;
+    }
+    else if (long_side >= 1800) {
+        by_long = 1080;
+    }
+    else if (long_side >= 1200) {
+        by_long = 720;
+    }
+
+    int32_t by_short = 480;
+    if (short_side >= 4000) {
+        by_short = 4320;
+    }
+    else if (short_side >= 2000) {
+        by_short = 2160;
+    }
+    else if (short_side >= 1300) {
+        by_short = 1440;
+    }
+    else if (short_side >= 1000) {
+        by_short = 1080;
+    }
+    else if (short_side >= 680) {
+        by_short = 720;
+    }
+
+    return MAX(by_long, by_short);
+}
+
+char *
+fsearch_media_info_normalize_codec_name(const char *name) {
+    g_return_val_if_fail(name, NULL);
+    char *lower = g_ascii_strdown(name, -1);
+    g_strstrip(lower);
+
+    static const struct {
+        const char *alias;
+        const char *codec;
+    } aliases[] = {
+        {"avc", "h264"},       {"avc1", "h264"},      {"x264", "h264"},       {"h.264", "h264"},
+        {"h265", "hevc"},      {"h.265", "hevc"},     {"x265", "hevc"},       {"xvid", "mpeg4"},
+        {"divx", "mpeg4"},     {"mpeg-4", "mpeg4"},   {"mpeg2", "mpeg2video"}, {"mpeg-2", "mpeg2video"},
+        {"mpeg1", "mpeg1video"}, {"wmv", "wmv3"},     {"vc-1", "vc1"},
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(aliases); ++i) {
+        if (!strcmp(lower, aliases[i].alias)) {
+            g_free(lower);
+            return g_strdup(aliases[i].codec);
+        }
+    }
+    return lower;
+}
+
+// ---- Parsing of values typed into search queries and the filter panel ----------------------------
+
+// Durations: "90" (seconds), "90s", "5m", "1.5h", "1h30m", "5:30", "1:02:03".
+// `start` is the beginning of the given time and `end` the end of its precision (e.g. "5m" covers 5:00 to
+// 5:59), so that "duration:5m" finds all videos of about five minutes.
+bool
+fsearch_media_info_parse_duration(const char *str, int64_t *start_ms, int64_t *end_ms) {
+    if (!str || !*str) {
+        return false;
+    }
+    double total_ms = 0;
+    double precision_ms = 1000;
+
+    if (strchr(str, ':')) {
+        g_auto(GStrv) parts = g_strsplit(str, ":", -1);
+        const guint n = g_strv_length(parts);
+        if (n < 2 || n > 3) {
+            return false;
+        }
+        double seconds = 0;
+        for (guint i = 0; i < n; ++i) {
+            char *endp = NULL;
+            const gint64 v = g_ascii_strtoll(parts[i], &endp, 10);
+            if (endp == parts[i] || *endp != '\0' || v < 0) {
+                return false;
+            }
+            seconds = seconds * 60 + (double)v;
+        }
+        total_ms = seconds * 1000;
+    }
+    else {
+        const char *p = str;
+        bool any = false;
+        double smallest_unit_ms = 0;
+        bool has_fraction = false;
+        while (*p) {
+            char *endp = NULL;
+            const double v = g_ascii_strtod(p, &endp);
+            if (endp == p || v < 0) {
+                return false;
+            }
+            if (memchr(p, '.', endp - p)) {
+                has_fraction = true;
+            }
+            p = endp;
+            double unit_ms = 1000;
+            if (g_ascii_strncasecmp(p, "h", 1) == 0) {
+                unit_ms = 3600 * 1000.0;
+                p += 1;
+            }
+            else if (g_ascii_strncasecmp(p, "min", 3) == 0) {
+                unit_ms = 60 * 1000.0;
+                p += 3;
+            }
+            else if (g_ascii_strncasecmp(p, "m", 1) == 0) {
+                unit_ms = 60 * 1000.0;
+                p += 1;
+            }
+            else if (g_ascii_strncasecmp(p, "sec", 3) == 0) {
+                p += 3;
+            }
+            else if (g_ascii_strncasecmp(p, "s", 1) == 0) {
+                p += 1;
+            }
+            else if (*p != '\0') {
+                return false;
+            }
+            total_ms += v * unit_ms;
+            if (!any || unit_ms < smallest_unit_ms) {
+                smallest_unit_ms = unit_ms;
+            }
+            any = true;
+        }
+        if (!any) {
+            return false;
+        }
+        precision_ms = has_fraction ? 1000 : smallest_unit_ms;
+    }
+
+    if (start_ms) {
+        *start_ms = (int64_t)(total_ms + 0.5);
+    }
+    if (end_ms) {
+        *end_ms = (int64_t)(total_ms + precision_ms + 0.5);
+    }
+    return true;
+}
+
+// Resolution classes: sd, hd (720p), fhd (1080p), qhd (1440p), uhd/4k (2160p), 8k, or numbers like 1080 / 1080p
+bool
+fsearch_media_info_parse_resolution_class(const char *str, int64_t *num_out, int64_t *num_2_out) {
+    g_autofree char *lower = g_ascii_strdown(str, -1);
+    int64_t value = 0;
+    if (!strcmp(lower, "sd")) {
+        value = 480;
+    }
+    else if (!strcmp(lower, "hd")) {
+        value = 720;
+    }
+    else if (!strcmp(lower, "fhd")) {
+        value = 1080;
+    }
+    else if (!strcmp(lower, "qhd") || !strcmp(lower, "2k")) {
+        value = 1440;
+    }
+    else if (!strcmp(lower, "uhd") || !strcmp(lower, "4k")) {
+        value = 2160;
+    }
+    else if (!strcmp(lower, "8k")) {
+        value = 4320;
+    }
+    else {
+        char *endp = NULL;
+        const gint64 v = g_ascii_strtoll(lower, &endp, 10);
+        if (endp == lower || (*endp != '\0' && strcmp(endp, "p") != 0) || v <= 0) {
+            return false;
+        }
+        if (v <= 576) {
+            value = 480;
+        }
+        else if (v == 720) {
+            value = 720;
+        }
+        else if (v == 1080) {
+            value = 1080;
+        }
+        else if (v == 1440) {
+            value = 1440;
+        }
+        else if (v == 2160) {
+            value = 2160;
+        }
+        else if (v == 4320) {
+            value = 4320;
+        }
+        else {
+            return false;
+        }
+    }
+    if (num_out) {
+        *num_out = value;
+    }
+    if (num_2_out) {
+        *num_2_out = value;
+    }
+    return true;
+}
+
+// Frame rates like "30", "29.97", "23.976"; the result is in 1/100 fps
+bool
+fsearch_media_info_parse_frame_rate(const char *str, int64_t *num_out, int64_t *num_2_out) {
+    char *endp = NULL;
+    const double fps = g_ascii_strtod(str, &endp);
+    if (endp == str || *endp != '\0' || fps <= 0.0 || fps > 10000.0) {
+        return false;
+    }
+    const int64_t value = (int64_t)(fps * 100.0 + 0.5);
+    if (num_out) {
+        *num_out = value;
+    }
+    if (num_2_out) {
+        *num_2_out = value;
+    }
+    return true;
+}
+
+// Bit rates like "800" (kb/s), "800k", "5m", "5mbps", "5000kbps"; the result is in kb/s
+bool
+fsearch_media_info_parse_bit_rate(const char *str, int64_t *num_out, int64_t *num_2_out) {
+    char *endp = NULL;
+    const double v = g_ascii_strtod(str, &endp);
+    if (endp == str || v < 0) {
+        return false;
+    }
+    g_autofree char *suffix = g_ascii_strdown(endp, -1);
+    double factor = 1;
+    if (suffix[0] == '\0' || !strcmp(suffix, "k") || !strcmp(suffix, "kb") || !strcmp(suffix, "kbps")
+        || !strcmp(suffix, "kb/s")) {
+        factor = 1;
+    }
+    else if (!strcmp(suffix, "m") || !strcmp(suffix, "mb") || !strcmp(suffix, "mbps") || !strcmp(suffix, "mb/s")) {
+        factor = 1000;
+    }
+    else if (!strcmp(suffix, "g") || !strcmp(suffix, "gb") || !strcmp(suffix, "gbps") || !strcmp(suffix, "gb/s")) {
+        factor = 1000 * 1000;
+    }
+    else {
+        return false;
+    }
+    const int64_t value = (int64_t)(v * factor + 0.5);
+    if (num_out) {
+        *num_out = value;
+    }
+    if (num_2_out) {
+        *num_2_out = value;
+    }
+    return true;
+}
+

@@ -93,6 +93,7 @@ struct _FsearchConfig {
     bool show_type_column;
     bool show_extension_column;
     bool show_path_length_column;
+    bool smart_matching;
     bool show_duration_column;
     bool show_resolution_column;
     bool show_video_codec_column;

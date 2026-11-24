@@ -30,6 +30,7 @@ typedef struct {
     GtkWidget *pathlen_min;
     GtkWidget *pathlen_max;
     GtkWidget *finder;
+    GtkWidget *smart_matching;
 
     GtkWidget *summary_label;
     GtkWidget *warning_label;
@@ -212,6 +213,11 @@ on_combo_changed(GtkComboBox *combo, gpointer user_data) {
 }
 
 static void
+on_check_toggled(GtkToggleButton *button, gpointer user_data) {
+    schedule_changed(user_data, 50);
+}
+
+static void
 on_ext_preset_changed(GtkComboBox *combo, gpointer user_data) {
     PanelData *d = user_data;
     const gint active = gtk_combo_box_get_active(combo);
@@ -387,6 +393,15 @@ fsearch_filter_panel_widget_new(FsearchFilterPanelChangedFunc changed, FsearchFi
     g_signal_connect(d->finder, "changed", G_CALLBACK(on_combo_changed), d);
     gtk_flow_box_insert(GTK_FLOW_BOX(flow), new_group(_("Find problems"), d->finder, NULL), -1);
 
+    d->smart_matching = gtk_check_button_new_with_label(_("Smart matching"));
+    gtk_widget_set_tooltip_text(d->smart_matching,
+                                _("Words in the search box match with any of the separators . _ - and spaces "
+                                  "(\"movie name\" finds Movie.Name and movie_name), and Arabic letters match "
+                                  "their variants (أ إ آ = ا, ة = ه, ى = ي), ignoring diacritics and digit styles."));
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->smart_matching), TRUE);
+    g_signal_connect(d->smart_matching, "toggled", G_CALLBACK(on_check_toggled), d);
+    gtk_flow_box_insert(GTK_FLOW_BOX(flow), new_group(NULL, d->smart_matching, NULL), -1);
+
     GtkWidget *reset = gtk_button_new_with_label(_("Reset filters"));
     g_signal_connect(reset, "clicked", G_CALLBACK(on_reset_clicked), d);
     gtk_flow_box_insert(GTK_FLOW_BOX(flow), new_group(NULL, reset, NULL), -1);
@@ -485,4 +500,18 @@ fsearch_filter_panel_widget_set_analyzing(GtkWidget *panel, bool analyzing) {
     PanelData *d = get_data(panel);
     d->analyzing = analyzing;
     update_summary(d);
+}
+
+gboolean
+fsearch_filter_panel_widget_get_smart_matching(GtkWidget *panel) {
+    PanelData *d = get_data(panel);
+    return gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(d->smart_matching));
+}
+
+void
+fsearch_filter_panel_widget_set_smart_matching(GtkWidget *panel, gboolean enabled) {
+    PanelData *d = get_data(panel);
+    d->resetting = true;
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->smart_matching), enabled);
+    d->resetting = false;
 }

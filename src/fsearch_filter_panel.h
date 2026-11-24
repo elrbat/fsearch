@@ -33,6 +33,14 @@ fsearch_filter_panel_widget_get_query(GtkWidget *panel, bool include_media);
 bool
 fsearch_filter_panel_widget_has_media_conditions(GtkWidget *panel);
 
+// "Smart matching" (see fsearch_smart_match.h) is switched in the panel, but applies to the text of the
+// search entry. Setting the value doesn't trigger the `changed` callback.
+gboolean
+fsearch_filter_panel_widget_get_smart_matching(GtkWidget *panel);
+
+void
+fsearch_filter_panel_widget_set_smart_matching(GtkWidget *panel, gboolean enabled);
+
 void
 fsearch_filter_panel_widget_reset(GtkWidget *panel);
 

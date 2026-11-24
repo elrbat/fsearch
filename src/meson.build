@@ -38,6 +38,7 @@ libfsearch_core_sources = [
     'fsearch_main_context_utils.c',
     'fsearch_media_info.c',
     'fsearch_filter_panel_query.c',
+    'fsearch_smart_match.c',
     'fsearch_query.c',
     'fsearch_query_match_data.c',
     'fsearch_query_matchers.c',

@@ -27,6 +27,7 @@
 #include "fsearch_database_info.h"
 #include "fsearch_database_search_info.h"
 #include "fsearch_filter_panel.h"
+#include "fsearch_smart_match.h"
 #include "fsearch_list_view.h"
 #include "fsearch_listview_popup.h"
 #include "fsearch_result_view.h"
@@ -163,7 +164,17 @@ get_query_text(FsearchApplicationWindow *win) {
 // With `include_media` false, conditions which need information from inside video files are left out.
 static char *
 get_effective_query_text(FsearchApplicationWindow *win, bool include_media) {
-    const char *text = get_query_text(win);
+    const char *typed_text = get_query_text(win);
+
+    // Smart matching: words match whatever separators and Arabic spelling variants the file names use.
+    // Not with regular expressions as the default search mode, where the text has its own meaning.
+    g_autofree char *smart_text = NULL;
+    const char *text = typed_text;
+    if (typed_text && typed_text[0] != '\0' && fsearch_filter_panel_widget_get_smart_matching(win->filter_panel)
+        && !(get_query_flags() & QUERY_FLAG_REGEX)) {
+        smart_text = fsearch_smart_match_rewrite(typed_text);
+        text = smart_text;
+    }
     g_autofree char *panel_query = fsearch_filter_panel_widget_get_query(win->filter_panel, include_media);
     if (!panel_query) {
         return g_strdup(text);
@@ -658,6 +669,8 @@ static void
 on_filter_panel_changed(gpointer user_data) {
     FsearchApplicationWindow *win = user_data;
     g_assert(FSEARCH_IS_APPLICATION_WINDOW(win));
+    FsearchConfig *config = fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT);
+    config->smart_matching = fsearch_filter_panel_widget_get_smart_matching(win->filter_panel);
     perform_search(win);
 }
 
@@ -1117,6 +1130,8 @@ fsearch_application_window_init(FsearchApplicationWindow *self) {
 
     // Panel with filters, below the search entry and above the results
     self->filter_panel = fsearch_filter_panel_widget_new(on_filter_panel_changed, on_filter_panel_analyze, self);
+    fsearch_filter_panel_widget_set_smart_matching(self->filter_panel,
+                                                   fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT)->smart_matching);
     gtk_box_pack_start(GTK_BOX(self->main_box), self->filter_panel, FALSE, TRUE, 0);
     gtk_box_reorder_child(GTK_BOX(self->main_box), self->filter_panel, 1);
 

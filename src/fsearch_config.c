@@ -127,6 +127,7 @@ static const FsearchKeyData INTERFACE_SECTION[] = {
     CONF_BOOL(show_type_column, false),
     CONF_BOOL(show_extension_column, true),
     CONF_BOOL(show_path_length_column, false),
+    CONF_BOOL(smart_matching, true),
     CONF_BOOL(show_duration_column, false),
     CONF_BOOL(show_resolution_column, false),
     CONF_BOOL(show_video_codec_column, false),

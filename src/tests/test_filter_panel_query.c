@@ -111,6 +111,38 @@ test_every_finder_and_all_fields_parse(void) {
     fsearch_filter_manager_unref(manager);
 }
 
+static void
+test_conditions(void) {
+    FsearchFilterPanelValues v = {.kind = 1, .extensions = "mp4, mkv", .size_min = "100mb", .modified = "pastweek", .res_min = "hd", .res_max = "fhd", .codec = "h264", .finder = "unreadable"};
+    GPtrArray *conditions = fsearch_filter_panel_build_conditions(&v, NULL);
+    g_assert_cmpuint(conditions->len, ==, 7);
+
+    const char *ids[] = {"type", "ext", "size", "modified", "res", "codec", "finder"};
+    const char *labels[] = {"Files only", "Extension: mp4;mkv", "Size: ≥ 100mb", "Modified: Past week", "Resolution: hd – fhd", "Codec: h264", "Find problems: Videos which can't be read (corrupt?)"};
+    for (guint i = 0; i < conditions->len; ++i) {
+        const FsearchFilterPanelCondition *c = g_ptr_array_index(conditions, i);
+        g_assert_cmpstr(c->id, ==, ids[i]);
+        g_assert_cmpstr(c->label, ==, labels[i]);
+    }
+
+    g_autofree char *all = fsearch_filter_panel_conditions_to_query(conditions, true, NULL);
+    g_assert_cmpstr(all, ==, "files: ext:mp4;mkv size:>=100mb dm:pastweek res:>=hd res:<=fhd codec:h264 media:unreadable");
+    g_autofree char *no_codec = fsearch_filter_panel_conditions_to_query(conditions, true, "codec");
+    g_assert_cmpstr(no_codec, ==, "files: ext:mp4;mkv size:>=100mb dm:pastweek res:>=hd res:<=fhd media:unreadable");
+    g_autofree char *no_media = fsearch_filter_panel_conditions_to_query(conditions, false, NULL);
+    g_assert_cmpstr(no_media, ==, "files: ext:mp4;mkv size:>=100mb dm:pastweek");
+    g_autofree char *no_res = fsearch_filter_panel_conditions_to_query(conditions, true, "res");
+    g_assert_nonnull(no_res);
+    g_assert_null(strstr(no_res, "res:"));
+    g_ptr_array_unref(conditions);
+
+    FsearchFilterPanelValues none = {0};
+    GPtrArray *empty = fsearch_filter_panel_build_conditions(&none, NULL);
+    g_assert_cmpuint(empty->len, ==, 0);
+    g_assert_null(fsearch_filter_panel_conditions_to_query(empty, true, NULL));
+    g_ptr_array_unref(empty);
+}
+
 int
 main(int argc, char **argv) {
     g_test_init(&argc, &argv, NULL);
@@ -120,5 +152,6 @@ main(int argc, char **argv) {
     g_test_add_func("/FSearch/filter_panel_query/problems", test_problems);
     g_test_add_func("/FSearch/filter_panel_query/finders", test_finders);
     g_test_add_func("/FSearch/filter_panel_query/valid_syntax", test_every_finder_and_all_fields_parse);
+    g_test_add_func("/FSearch/filter_panel_query/conditions", test_conditions);
     return g_test_run();
 }

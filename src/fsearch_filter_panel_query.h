@@ -37,6 +37,28 @@ typedef struct {
 extern const FsearchFilterPanelFinder fsearch_filter_panel_finders[];
 extern const unsigned int fsearch_filter_panel_num_finders;
 
+// One condition of the filter panel, e.g. the size range or the extensions. Each of them can be removed
+// on its own, which is how the panel suggests ways to get results from a search without any.
+typedef struct {
+    char *id;                // "type", "ext", "size", "modified", "pathlen", "duration", "res", "fps", "bitrate", "codec", "finder"
+    char *label;             // for people: "Size: 10mb – 2gb"
+    char *query;             // search syntax, e.g. "size:>=10mb size:<=2gb"
+    bool needs_media_info;   // depends on information read from inside video files
+} FsearchFilterPanelCondition;
+
+void
+fsearch_filter_panel_condition_free(FsearchFilterPanelCondition *condition);
+
+// All valid conditions in the order they appear in the query, as FsearchFilterPanelCondition. Free the array
+// with g_ptr_array_unref(). Messages about invalid values are added to `problems` (optional).
+GPtrArray *
+fsearch_filter_panel_build_conditions(const FsearchFilterPanelValues *values, GPtrArray *problems);
+
+// Joins the conditions to a search query; NULL if there is none. `exclude_id` (optional) leaves one condition out,
+// `include_media` false leaves out the ones which depend on the contents of video files.
+char *
+fsearch_filter_panel_conditions_to_query(GPtrArray *conditions, bool include_media, const char *exclude_id);
+
 // Builds the search query for the values, e.g. "files: ext:mp4;mkv res:>=fhd duration:>=30m".
 // Returns NULL if nothing is set. With `include_media` false all conditions which depend on information
 // read from inside video files are left out (used to find the videos which still need to be analyzed).

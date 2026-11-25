@@ -69,15 +69,38 @@ add_problem(GPtrArray *problems, const char *format, ...) {
     va_end(args);
 }
 
-// Appends the tokens for a "from - to" pair of values. Returns the number of problems found.
 static void
-append_range(GString *query,
-             const char *field,
-             const char *label,
-             const char *min_in,
-             const char *max_in,
-             ValueParser parse,
-             GPtrArray *problems) {
+add_condition(GPtrArray *conditions, const char *id, char *label, char *query, bool needs_media_info) {
+    FsearchFilterPanelCondition *condition = g_new0(FsearchFilterPanelCondition, 1);
+    condition->id = g_strdup(id);
+    condition->label = label;
+    condition->query = query;
+    condition->needs_media_info = needs_media_info;
+    g_ptr_array_add(conditions, condition);
+}
+
+void
+fsearch_filter_panel_condition_free(FsearchFilterPanelCondition *condition) {
+    if (!condition) {
+        return;
+    }
+    g_free(condition->id);
+    g_free(condition->label);
+    g_free(condition->query);
+    g_free(condition);
+}
+
+// Adds the condition for a "from - to" pair of values (if any of them is valid)
+static void
+add_range_condition(GPtrArray *conditions,
+                    const char *id,
+                    const char *field,
+                    const char *label,
+                    const char *min_in,
+                    const char *max_in,
+                    ValueParser parse,
+                    bool needs_media_info,
+                    GPtrArray *problems) {
     g_autofree char *min = trimmed(min_in);
     g_autofree char *max = trimmed(max_in);
     int64_t min_val = 0;
@@ -102,14 +125,21 @@ append_range(GString *query,
         return;
     }
     if (min_ok && max_ok && min_val == max_val) {
-        g_string_append_printf(query, " %s:%s", field, min);
+        add_condition(conditions, id, g_strdup_printf("%s: %s", label, min), g_strdup_printf("%s:%s", field, min), needs_media_info);
         return;
     }
-    if (min_ok) {
-        g_string_append_printf(query, " %s:>=%s", field, min);
+    if (min_ok && max_ok) {
+        add_condition(conditions,
+                      id,
+                      g_strdup_printf("%s: %s – %s", label, min, max),
+                      g_strdup_printf("%s:>=%s %s:<=%s", field, min, field, max),
+                      needs_media_info);
     }
-    if (max_ok) {
-        g_string_append_printf(query, " %s:<=%s", field, max);
+    else if (min_ok) {
+        add_condition(conditions, id, g_strdup_printf("%s: ≥ %s", label, min), g_strdup_printf("%s:>=%s", field, min), needs_media_info);
+    }
+    else if (max_ok) {
+        add_condition(conditions, id, g_strdup_printf("%s: ≤ %s", label, max), g_strdup_printf("%s:<=%s", field, max), needs_media_info);
     }
 }
 
@@ -157,55 +187,91 @@ fsearch_filter_panel_has_media_conditions(const FsearchFilterPanelValues *v) {
            || is_set(v->bitrate_max) || (finder && finder->needs_media_info);
 }
 
-char *
-fsearch_filter_panel_build_query(const FsearchFilterPanelValues *v, bool include_media, GPtrArray *problems) {
+static const char *
+modified_label(const char *value) {
+    static const struct {
+        const char *value;
+        const char *label;
+    } labels[] = {
+        {"today", "Today"},           {"yesterday", "Yesterday"}, {"pastweek", "Past week"},
+        {"pastmonth", "Past month"}, {"thisyear", "This year"},   {"pastyear", "Past year"},
+    };
+    for (guint i = 0; i < G_N_ELEMENTS(labels); ++i) {
+        if (!strcmp(labels[i].value, value)) {
+            return labels[i].label;
+        }
+    }
+    return value;
+}
+
+GPtrArray *
+fsearch_filter_panel_build_conditions(const FsearchFilterPanelValues *v, GPtrArray *problems) {
     g_return_val_if_fail(v, NULL);
-    GString *query = g_string_new(NULL);
+    GPtrArray *conditions = g_ptr_array_new_with_free_func((GDestroyNotify)fsearch_filter_panel_condition_free);
 
     if (v->kind == 1) {
-        g_string_append(query, " files:");
+        add_condition(conditions, "type", g_strdup("Files only"), g_strdup("files:"), false);
     }
     else if (v->kind == 2) {
-        g_string_append(query, " folders:");
+        add_condition(conditions, "type", g_strdup("Folders only"), g_strdup("folders:"), false);
     }
 
     g_autofree char *extensions = normalize_list(v->extensions);
     if (*extensions) {
-        g_string_append_printf(query, " ext:%s", extensions);
+        add_condition(conditions, "ext", g_strdup_printf("Extension: %s", extensions), g_strdup_printf("ext:%s", extensions), false);
     }
 
-    append_range(query, "size", "Size", v->size_min, v->size_max, parse_size, problems);
+    add_range_condition(conditions, "size", "size", "Size", v->size_min, v->size_max, parse_size, false, problems);
 
     g_autofree char *modified = trimmed(v->modified);
     if (*modified) {
-        g_string_append_printf(query, " dm:%s", modified);
+        add_condition(conditions, "modified", g_strdup_printf("Modified: %s", modified_label(modified)), g_strdup_printf("dm:%s", modified), false);
     }
 
-    append_range(query, "pathlen", "Path length", v->pathlen_min, v->pathlen_max, parse_plain_integer, problems);
+    add_range_condition(conditions, "pathlen", "pathlen", "Path length", v->pathlen_min, v->pathlen_max, parse_plain_integer, false, problems);
+    add_range_condition(conditions, "duration", "duration", "Duration", v->duration_min, v->duration_max, fsearch_media_info_parse_duration, true, problems);
+    add_range_condition(conditions, "res", "res", "Resolution", v->res_min, v->res_max, fsearch_media_info_parse_resolution_class, true, problems);
+    add_range_condition(conditions, "fps", "fps", "FPS", v->fps_min, v->fps_max, fsearch_media_info_parse_frame_rate, true, problems);
+    add_range_condition(conditions, "bitrate", "bitrate", "Bit rate", v->bitrate_min, v->bitrate_max, fsearch_media_info_parse_bit_rate, true, problems);
 
-    if (include_media) {
-        append_range(query, "duration", "Duration", v->duration_min, v->duration_max, fsearch_media_info_parse_duration, problems);
-        append_range(query, "res", "Resolution", v->res_min, v->res_max, fsearch_media_info_parse_resolution_class, problems);
-        append_range(query, "fps", "FPS", v->fps_min, v->fps_max, fsearch_media_info_parse_frame_rate, problems);
-        append_range(query, "bitrate", "Bit rate", v->bitrate_min, v->bitrate_max, fsearch_media_info_parse_bit_rate, problems);
-
-        g_autofree char *codec = normalize_list(v->codec);
-        if (*codec) {
-            g_string_append_printf(query, " codec:%s", codec);
-        }
+    g_autofree char *codec = normalize_list(v->codec);
+    if (*codec) {
+        add_condition(conditions, "codec", g_strdup_printf("Codec: %s", codec), g_strdup_printf("codec:%s", codec), true);
     }
 
     const FsearchFilterPanelFinder *finder = find_finder(v->finder);
-    if (finder && (include_media || !finder->needs_media_info)) {
-        g_string_append_printf(query, " %s", finder->query);
+    if (finder) {
+        add_condition(conditions, "finder", g_strdup_printf("Find problems: %s", finder->label), g_strdup(finder->query), finder->needs_media_info);
     }
+    return conditions;
+}
 
-    g_strstrip(query->str);
-    if (query->str[0] == '\0') {
+char *
+fsearch_filter_panel_conditions_to_query(GPtrArray *conditions, bool include_media, const char *exclude_id) {
+    g_return_val_if_fail(conditions, NULL);
+    GString *query = g_string_new(NULL);
+    for (guint i = 0; i < conditions->len; ++i) {
+        const FsearchFilterPanelCondition *c = g_ptr_array_index(conditions, i);
+        if ((!include_media && c->needs_media_info) || (exclude_id && !strcmp(c->id, exclude_id))) {
+            continue;
+        }
+        if (query->len) {
+            g_string_append_c(query, ' ');
+        }
+        g_string_append(query, c->query);
+    }
+    if (query->len == 0) {
         g_string_free(query, TRUE);
         return NULL;
     }
-    char *result = g_strdup(query->str);
-    g_string_free(query, TRUE);
-    return result;
+    return g_string_free(query, FALSE);
+}
+
+char *
+fsearch_filter_panel_build_query(const FsearchFilterPanelValues *v, bool include_media, GPtrArray *problems) {
+    g_return_val_if_fail(v, NULL);
+    GPtrArray *conditions = fsearch_filter_panel_build_conditions(v, problems);
+    char *query = fsearch_filter_panel_conditions_to_query(conditions, include_media, NULL);
+    g_ptr_array_unref(conditions);
+    return query;
 }

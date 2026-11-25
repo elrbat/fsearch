@@ -37,9 +37,13 @@ typedef struct {
     GtkWidget *media_note_box;
     GtkWidget *analyze_button;
     GtkWidget *analyze_label;
+    GtkWidget *suggestion_box;
+    GtkWidget *suggestion_label;
+    GtkWidget *suggestion_flow;
 
     FsearchFilterPanelChangedFunc changed;
     FsearchFilterPanelAnalyzeFunc analyze;
+    FsearchFilterPanelSuggestionFunc suggestion;
     gpointer user_data;
 
     guint changed_timeout_id;
@@ -302,12 +306,16 @@ free_panel_data(gpointer data) {
 }
 
 GtkWidget *
-fsearch_filter_panel_widget_new(FsearchFilterPanelChangedFunc changed, FsearchFilterPanelAnalyzeFunc analyze, gpointer user_data) {
+fsearch_filter_panel_widget_new(FsearchFilterPanelChangedFunc changed,
+                                FsearchFilterPanelAnalyzeFunc analyze,
+                                FsearchFilterPanelSuggestionFunc suggestion,
+                                gpointer user_data) {
     install_css();
 
     PanelData *d = g_new0(PanelData, 1);
     d->changed = changed;
     d->analyze = analyze;
+    d->suggestion = suggestion;
     d->user_data = user_data;
 
     d->revealer = gtk_revealer_new();
@@ -436,13 +444,30 @@ fsearch_filter_panel_widget_new(FsearchFilterPanelChangedFunc changed, FsearchFi
     gtk_box_pack_start(GTK_BOX(outer), d->media_note_box, FALSE, TRUE, 0);
     gtk_widget_set_no_show_all(d->media_note_box, TRUE);
 
+    d->suggestion_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 4);
+    d->suggestion_label = gtk_label_new("");
+    gtk_label_set_xalign(GTK_LABEL(d->suggestion_label), 0.0f);
+    gtk_label_set_line_wrap(GTK_LABEL(d->suggestion_label), TRUE);
+    gtk_style_context_add_class(gtk_widget_get_style_context(d->suggestion_label), "fsearch-filter-title");
+    d->suggestion_flow = gtk_flow_box_new();
+    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(d->suggestion_flow), GTK_SELECTION_NONE);
+    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(d->suggestion_flow), 6);
+    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(d->suggestion_flow), FALSE);
+    gtk_box_pack_start(GTK_BOX(d->suggestion_box), d->suggestion_label, FALSE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(d->suggestion_box), d->suggestion_flow, FALSE, TRUE, 0);
+    gtk_box_pack_start(GTK_BOX(outer), d->suggestion_box, FALSE, TRUE, 0);
+    gtk_widget_set_no_show_all(d->suggestion_box, TRUE);
+
     gtk_widget_show_all(d->revealer);
     // The children of widgets with "no show all" aren't shown by show_all, but must be visible
     // themselves when their parent gets shown later
     gtk_widget_show(d->analyze_label);
     gtk_widget_show(d->analyze_button);
+    gtk_widget_show(d->suggestion_label);
+    gtk_widget_show(d->suggestion_flow);
     gtk_widget_set_visible(d->warning_label, FALSE);
     gtk_widget_set_visible(d->media_note_box, FALSE);
+    gtk_widget_set_visible(d->suggestion_box, FALSE);
     update_summary(d);
     return d->revealer;
 }
@@ -514,4 +539,124 @@ fsearch_filter_panel_widget_set_smart_matching(GtkWidget *panel, gboolean enable
     d->resetting = true;
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(d->smart_matching), enabled);
     d->resetting = false;
+}
+
+GPtrArray *
+fsearch_filter_panel_widget_get_conditions(GtkWidget *panel) {
+    PanelData *d = get_data(panel);
+    FsearchFilterPanelValues v;
+    g_autofree char *finder_id = NULL;
+    collect_values(d, &v, &finder_id);
+    return fsearch_filter_panel_build_conditions(&v, NULL);
+}
+
+char *
+fsearch_filter_panel_widget_get_query_excluding(GtkWidget *panel, bool include_media, const char *exclude_id) {
+    g_autoptr(GPtrArray) conditions = fsearch_filter_panel_widget_get_conditions(panel);
+    return fsearch_filter_panel_conditions_to_query(conditions, include_media, exclude_id);
+}
+
+static void
+clear_entries(GtkWidget **entries, guint n) {
+    for (guint i = 0; i < n; ++i) {
+        gtk_entry_set_text(GTK_ENTRY(entries[i]), "");
+    }
+}
+
+static void
+reset_combos(GtkWidget **combos, guint n) {
+    for (guint i = 0; i < n; ++i) {
+        gtk_combo_box_set_active(GTK_COMBO_BOX(combos[i]), 0);
+    }
+}
+
+void
+fsearch_filter_panel_widget_remove_condition(GtkWidget *panel, const char *id) {
+    PanelData *d = get_data(panel);
+    d->resetting = true;
+    if (!strcmp(id, "type")) {
+        reset_combos((GtkWidget *[]){d->kind}, 1);
+    }
+    else if (!strcmp(id, "ext")) {
+        clear_entries((GtkWidget *[]){d->ext}, 1);
+    }
+    else if (!strcmp(id, "size")) {
+        clear_entries((GtkWidget *[]){d->size_min, d->size_max}, 2);
+    }
+    else if (!strcmp(id, "modified")) {
+        reset_combos((GtkWidget *[]){d->modified}, 1);
+    }
+    else if (!strcmp(id, "pathlen")) {
+        clear_entries((GtkWidget *[]){d->pathlen_min, d->pathlen_max}, 2);
+    }
+    else if (!strcmp(id, "duration")) {
+        clear_entries((GtkWidget *[]){d->duration_min, d->duration_max}, 2);
+    }
+    else if (!strcmp(id, "res")) {
+        reset_combos((GtkWidget *[]){d->res_min, d->res_max}, 2);
+    }
+    else if (!strcmp(id, "fps")) {
+        clear_entries((GtkWidget *[]){d->fps_min, d->fps_max}, 2);
+    }
+    else if (!strcmp(id, "bitrate")) {
+        clear_entries((GtkWidget *[]){d->bitrate_min, d->bitrate_max}, 2);
+    }
+    else if (!strcmp(id, "codec")) {
+        clear_entries((GtkWidget *[]){gtk_bin_get_child(GTK_BIN(d->codec))}, 1);
+    }
+    else if (!strcmp(id, "finder")) {
+        reset_combos((GtkWidget *[]){d->finder}, 1);
+    }
+    d->resetting = false;
+    schedule_changed(d, 0);
+}
+
+static void
+on_suggestion_clicked(GtkButton *button, gpointer user_data) {
+    PanelData *d = user_data;
+    const char *id = g_object_get_data(G_OBJECT(button), "condition-id");
+    g_autofree char *id_copy = g_strdup(id);
+    if (!id_copy) {
+        return;
+    }
+    if (!strcmp(id_copy, "text")) {
+        if (d->suggestion) {
+            d->suggestion(id_copy, d->user_data);
+        }
+    }
+    else {
+        fsearch_filter_panel_widget_remove_condition(d->revealer, id_copy);
+    }
+}
+
+void
+fsearch_filter_panel_widget_clear_suggestions(GtkWidget *panel) {
+    PanelData *d = get_data(panel);
+    GList *children = gtk_container_get_children(GTK_CONTAINER(d->suggestion_flow));
+    for (GList *l = children; l; l = l->next) {
+        gtk_widget_destroy(GTK_WIDGET(l->data));
+    }
+    g_list_free(children);
+    gtk_widget_set_visible(d->suggestion_box, FALSE);
+}
+
+void
+fsearch_filter_panel_widget_set_suggestions(GtkWidget *panel,
+                                            const char *message,
+                                            const char *const *ids,
+                                            const char *const *labels,
+                                            guint n) {
+    PanelData *d = get_data(panel);
+    fsearch_filter_panel_widget_clear_suggestions(panel);
+    gtk_label_set_text(GTK_LABEL(d->suggestion_label), message);
+    for (guint i = 0; i < n; ++i) {
+        GtkWidget *button = gtk_button_new_with_label(labels[i]);
+        gtk_widget_set_tooltip_text(button, _("Remove this condition and search again"));
+        g_object_set_data_full(G_OBJECT(button), "condition-id", g_strdup(ids[i]), g_free);
+        g_signal_connect(button, "clicked", G_CALLBACK(on_suggestion_clicked), d);
+        gtk_widget_show(button);
+        gtk_flow_box_insert(GTK_FLOW_BOX(d->suggestion_flow), button, -1);
+    }
+    gtk_widget_set_visible(d->suggestion_flow, n > 0);
+    gtk_widget_set_visible(d->suggestion_box, TRUE);
 }

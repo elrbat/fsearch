@@ -27,6 +27,7 @@
 #include "fsearch_database_info.h"
 #include "fsearch_database_search_info.h"
 #include "fsearch_filter_panel.h"
+#include "fsearch_filter_panel_query.h"
 #include "fsearch_smart_match.h"
 #include "fsearch_list_view.h"
 #include "fsearch_listview_popup.h"
@@ -35,6 +36,10 @@
 #include "fsearch_window.h"
 #include "fsearch_window_actions.h"
 #include <glib/gi18n.h>
+
+// Searches which only count results use view ids above this value, followed by the window id and a slot
+#define PROBE_VIEW_ID_BASE 0x40000000u
+#define MAX_PROBES 12
 
 struct _FsearchApplicationWindow {
     GtkApplicationWindow parent_instance;
@@ -69,6 +74,15 @@ struct _FsearchApplicationWindow {
     // 2 = sorting by duration (which reads the files), 0 = not analyzing
     int analysis_stage;
 
+    // Searches without one of the conditions, to suggest what to remove when nothing was found
+    FsearchDatabaseWork *probe_works[MAX_PROBES];
+    char *probe_ids[MAX_PROBES];
+    char *probe_labels[MAX_PROBES];
+    gint64 probe_counts[MAX_PROBES];
+    guint probe_total;
+    guint probe_pending;
+    bool probe_panel_has_conditions;
+
     char *active_filter_name;
 
     FsearchDatabase *db;
@@ -101,6 +115,15 @@ G_DEFINE_TYPE(FsearchApplicationWindow, fsearch_application_window, GTK_TYPE_APP
 
 static void
 perform_search(FsearchApplicationWindow *win);
+
+static void
+cancel_probes(FsearchApplicationWindow *win);
+
+static void
+start_probes(FsearchApplicationWindow *win, FsearchDatabaseSearchInfo *info);
+
+static void
+handle_probe_finished(guint id, FsearchDatabaseSearchInfo *info);
 
 static void
 show_overlay(FsearchApplicationWindow *win, FsearchOverlay overlay);
@@ -163,8 +186,10 @@ get_query_text(FsearchApplicationWindow *win) {
 // The text of the search entry combined with the conditions of the filter panel.
 // With `include_media` false, conditions which need information from inside video files are left out.
 static char *
-get_effective_query_text(FsearchApplicationWindow *win, bool include_media) {
-    const char *typed_text = get_query_text(win);
+get_effective_query_text_excluding(FsearchApplicationWindow *win, bool include_media, const char *exclude_id) {
+    // The id "text" leaves out the text of the search entry, any other id one condition of the filter panel
+    const bool exclude_text = exclude_id && !strcmp(exclude_id, "text");
+    const char *typed_text = exclude_text ? "" : get_query_text(win);
 
     // Smart matching: words match whatever separators and Arabic spelling variants the file names use.
     // Not with regular expressions as the default search mode, where the text has its own meaning.
@@ -175,7 +200,8 @@ get_effective_query_text(FsearchApplicationWindow *win, bool include_media) {
         smart_text = fsearch_smart_match_rewrite(typed_text);
         text = smart_text;
     }
-    g_autofree char *panel_query = fsearch_filter_panel_widget_get_query(win->filter_panel, include_media);
+    g_autofree char *panel_query =
+        fsearch_filter_panel_widget_get_query_excluding(win->filter_panel, include_media, exclude_text ? NULL : exclude_id);
     if (!panel_query) {
         return g_strdup(text);
     }
@@ -424,6 +450,7 @@ fsearch_application_window_finalize(GObject *object) {
     g_clear_pointer(&self->result_view, fsearch_result_view_free);
     g_clear_pointer(&self->work_search, fsearch_database_work_unref);
     g_clear_pointer(&self->work_sort, fsearch_database_work_unref);
+    cancel_probes(self);
     g_clear_object(&self->db);
 
     G_OBJECT_CLASS(fsearch_application_window_parent_class)->finalize(object);
@@ -590,6 +617,10 @@ search_info_matches_tracked_work(FsearchApplicationWindow *win, FsearchDatabaseS
 
 static void
 on_search_finished(FsearchDatabase *db, guint id, FsearchDatabaseSearchInfo *info, gpointer self) {
+    if (id >= PROBE_VIEW_ID_BASE) {
+        handle_probe_finished(id, info);
+        return;
+    }
     FsearchApplicationWindow *win = get_window_for_id(id);
 
     if (win) {
@@ -598,6 +629,7 @@ on_search_finished(FsearchDatabase *db, guint id, FsearchDatabaseSearchInfo *inf
         }
         apply_search_info(win, info, true);
         g_clear_pointer(&win->work_search, fsearch_database_work_unref);
+        start_probes(win, info);
         if (win->analysis_stage == 1) {
             // Found all videos which match the other filters: read their media info by sorting by duration
             win->analysis_stage = 2;
@@ -625,6 +657,11 @@ on_search_started(FsearchDatabase *db, gpointer data, gpointer user_data) {
     return;
 }
 
+static char *
+get_effective_query_text(FsearchApplicationWindow *win, bool include_media) {
+    return get_effective_query_text_excluding(win, include_media, NULL);
+}
+
 // With `analysis` the conditions about the contents of video files are left out. The window then sorts these
 // results by duration, which reads the media info of all videos in them (see fsearch_database_sort.c), and
 // afterwards runs the normal search again, so that the media conditions see the freshly read information.
@@ -643,6 +680,7 @@ perform_search_ex(FsearchApplicationWindow *win, bool analysis) {
         fsearch_database_work_cancel(win->work_search);
     }
     g_clear_pointer(&win->work_search, fsearch_database_work_unref);
+    cancel_probes(win);
     if (!analysis && win->analysis_stage != 0) {
         // a new search replaces a running analysis
         win->analysis_stage = 0;
@@ -681,6 +719,157 @@ on_filter_panel_analyze(gpointer user_data) {
     perform_search_ex(win, true);
     win->analysis_stage = 1;
     fsearch_filter_panel_widget_set_analyzing(win->filter_panel, true);
+}
+
+static void
+cancel_probes(FsearchApplicationWindow *win) {
+    for (guint i = 0; i < win->probe_total; ++i) {
+        if (win->probe_works[i]) {
+            fsearch_database_work_cancel(win->probe_works[i]);
+        }
+        g_clear_pointer(&win->probe_works[i], fsearch_database_work_unref);
+        g_clear_pointer(&win->probe_ids[i], g_free);
+        g_clear_pointer(&win->probe_labels[i], g_free);
+    }
+    win->probe_total = 0;
+    win->probe_pending = 0;
+    if (win->filter_panel) {
+        fsearch_filter_panel_widget_clear_suggestions(win->filter_panel);
+    }
+}
+
+static void
+add_probe(FsearchApplicationWindow *win, const char *id, char *label) {
+    const guint slot = win->probe_total;
+    g_autofree char *text = get_effective_query_text_excluding(win, true, id);
+    const guint win_id = gtk_application_window_get_id(GTK_APPLICATION_WINDOW(win));
+    FsearchFilter *filter = get_active_filter(win);
+    FsearchConfig *config = fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT);
+    g_autoptr(FsearchQuery) query = fsearch_query_new(text, filter, config->filters, get_query_flags(), "probe");
+    g_clear_pointer(&filter, fsearch_filter_unref);
+
+    win->probe_ids[slot] = g_strdup(id);
+    win->probe_labels[slot] = label;
+    win->probe_counts[slot] = 0;
+    win->probe_works[slot] = fsearch_database_work_new_search(PROBE_VIEW_ID_BASE + (win_id << 8) + slot,
+                                                              query,
+                                                              DATABASE_INDEX_PROPERTY_NAME,
+                                                              FSEARCH_SORT_DIRECTION_ASCENDING);
+    win->probe_total++;
+    win->probe_pending++;
+}
+
+// A search without results: find out which condition, if removed, would give results
+static void
+start_probes(FsearchApplicationWindow *win, FsearchDatabaseSearchInfo *info) {
+    if (win->analysis_stage != 0 || fsearch_database_search_info_get_num_entries(info) != 0) {
+        return;
+    }
+    cancel_probes(win);
+
+    g_autoptr(GPtrArray) conditions = fsearch_filter_panel_widget_get_conditions(win->filter_panel);
+    const char *typed_text = get_query_text(win);
+    const bool has_text = typed_text && typed_text[0] != '\0';
+    if (conditions->len + (has_text ? 1 : 0) < 2) {
+        // With a single condition there's nothing to relax
+        return;
+    }
+    win->probe_panel_has_conditions = conditions->len > 0;
+
+    if (has_text) {
+        g_autofree char *shortened = g_utf8_strlen(typed_text, -1) > 24
+                                         ? g_strdup_printf("%.*s…", (int)(g_utf8_offset_to_pointer(typed_text, 24) - typed_text), typed_text)
+                                         : g_strdup(typed_text);
+        add_probe(win, "text", g_strdup_printf(_("Search text: %s"), shortened));
+    }
+    for (guint i = 0; i < conditions->len && win->probe_total < MAX_PROBES; ++i) {
+        const FsearchFilterPanelCondition *c = g_ptr_array_index(conditions, i);
+        add_probe(win, c->id, g_strdup(c->label));
+    }
+    for (guint i = 0; i < win->probe_total; ++i) {
+        fsearch_database_queue_work(win->db, win->probe_works[i]);
+    }
+}
+
+static void
+finish_probes(FsearchApplicationWindow *win) {
+    // Conditions whose removal gives results, the one with the fewest results (closest to the original) first
+    guint order[MAX_PROBES];
+    guint n = 0;
+    for (guint i = 0; i < win->probe_total; ++i) {
+        if (win->probe_counts[i] > 0) {
+            guint pos = n++;
+            while (pos > 0 && win->probe_counts[order[pos - 1]] > win->probe_counts[i]) {
+                order[pos] = order[pos - 1];
+                pos--;
+            }
+            order[pos] = i;
+        }
+    }
+
+    const char *ids[MAX_PROBES];
+    char *labels[MAX_PROBES] = {NULL};
+    for (guint k = 0; k < n; ++k) {
+        const guint i = order[k];
+        ids[k] = win->probe_ids[i];
+        labels[k] = g_strdup_printf(g_dngettext(NULL, "%s → %ld result", "%s → %ld results", (gulong)win->probe_counts[i]),
+                                    win->probe_labels[i],
+                                    (long)win->probe_counts[i]);
+    }
+
+    if (n > 0) {
+        fsearch_filter_panel_widget_set_suggestions(win->filter_panel,
+                                                    _("Nothing found. Remove a condition to get results:"),
+                                                    ids,
+                                                    (const char *const *)labels,
+                                                    n);
+    }
+    else {
+        fsearch_filter_panel_widget_set_suggestions(win->filter_panel,
+                                                    _("Nothing found, and removing any single condition doesn't help. Try removing several."),
+                                                    NULL,
+                                                    NULL,
+                                                    0);
+    }
+    for (guint k = 0; k < n; ++k) {
+        g_free(labels[k]);
+        labels[k] = NULL;
+    }
+
+    // The suggestions are part of the panel: show it if the conditions of the panel are involved
+    if (win->probe_panel_has_conditions && !fsearch_filter_panel_widget_get_revealed(win->filter_panel)) {
+        gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(win->filter_panel_button), TRUE);
+    }
+}
+
+static void
+handle_probe_finished(guint id, FsearchDatabaseSearchInfo *info) {
+    const guint slot = id & 0xff;
+    const guint win_id = (id - PROBE_VIEW_ID_BASE) >> 8;
+    FsearchApplicationWindow *win = get_window_for_id(win_id);
+    if (!win || slot >= win->probe_total || !win->probe_works[slot]) {
+        return;
+    }
+    g_autoptr(FsearchQuery) tracked_query = fsearch_database_work_search_get_query(win->probe_works[slot]);
+    g_autoptr(FsearchQuery) info_query = fsearch_database_search_info_get_query(info);
+    if (tracked_query != info_query) {
+        return;
+    }
+    win->probe_counts[slot] = (gint64)fsearch_database_search_info_get_num_entries(info);
+    g_clear_pointer(&win->probe_works[slot], fsearch_database_work_unref);
+    if (win->probe_pending > 0 && --win->probe_pending == 0) {
+        finish_probes(win);
+    }
+}
+
+static void
+on_filter_panel_suggestion(const char *id, gpointer user_data) {
+    FsearchApplicationWindow *win = user_data;
+    g_assert(FSEARCH_IS_APPLICATION_WINDOW(win));
+    if (!strcmp(id, "text")) {
+        gtk_entry_set_text(GTK_ENTRY(win->search_entry), "");
+        perform_search(win);
+    }
 }
 
 static void
@@ -1129,7 +1318,7 @@ fsearch_application_window_init(FsearchApplicationWindow *self) {
     gtk_widget_init_template(GTK_WIDGET(self));
 
     // Panel with filters, below the search entry and above the results
-    self->filter_panel = fsearch_filter_panel_widget_new(on_filter_panel_changed, on_filter_panel_analyze, self);
+    self->filter_panel = fsearch_filter_panel_widget_new(on_filter_panel_changed, on_filter_panel_analyze, on_filter_panel_suggestion, self);
     fsearch_filter_panel_widget_set_smart_matching(self->filter_panel,
                                                    fsearch_application_get_config(FSEARCH_APPLICATION_DEFAULT)->smart_matching);
     gtk_box_pack_start(GTK_BOX(self->main_box), self->filter_panel, FALSE, TRUE, 0);
